@@ -1,0 +1,584 @@
+"""秘書AI「清瀬リンク」── チャット会話 ＋ 4象限ボード(Streamlit / 作り込みUI)
+
+使い方:
+  py -m streamlit run app.py
+"""
+
+from __future__ import annotations
+
+import base64
+import datetime as dt
+import os
+from pathlib import Path
+
+import markdown as _md
+import streamlit as st
+
+import google_client as gc
+import storage
+from classifier import (
+    QUADRANT_LABEL,
+    SECRETARY_NAME,
+    TIME_LABEL,
+    build_context_block,
+    classify_tasks,
+    clear_manual_label,
+    extract_tasks_from_conversation,
+    secretary_chat,
+    set_manual_label,
+)
+
+storage.init_db()
+
+
+def _notify_endpoint():
+    """クエリパラメータ ?notify=morning|evening でアクセスされたとき、
+    LINE Push を実行して即終了する。cron-job.org など外部 cron から叩く。
+
+    安全鍵: secrets に NOTIFY_KEY を設定し、?key=... が一致した時だけ実行する。
+    """
+    qp = dict(st.query_params)
+    mode_q = qp.get("notify")
+    if not mode_q:
+        return
+    expected_key = st.secrets.get("NOTIFY_KEY", "") if hasattr(st, "secrets") else ""
+    if expected_key and qp.get("key") != expected_key:
+        st.write("403"); st.stop()
+    if mode_q not in ("morning", "evening", "ping"):
+        st.write("400: notify must be morning|evening|ping"); st.stop()
+    try:
+        from notify_ntfy import send, send_briefing
+        if mode_q == "ping":
+            res = send("✅ 清瀬リンクのテスト通知",
+                       "これはテスト送信です。ntfy の設定が正しいか確認しています。",
+                       tags=["white_check_mark"])
+        else:
+            res = send_briefing(mode_q)
+        st.write({"notify": mode_q, "result": res})
+    except Exception as e:  # noqa: BLE001
+        st.write({"notify": mode_q, "error": str(e)})
+    st.stop()
+
+
+_notify_endpoint()
+
+st.set_page_config(page_title=f"秘書AI {SECRETARY_NAME}", page_icon="🗒️", layout="wide")
+
+if "GEMINI_API_KEY" in st.secrets:
+    os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
+if "GEMINI_MODEL" in st.secrets:
+    os.environ["GEMINI_MODEL"] = st.secrets["GEMINI_MODEL"]
+
+
+def _password_gate():
+    """secrets に APP_PASSWORD があれば、入力が一致するまで画面を出さない。
+    ローカル運用(未設定)では素通りする。
+    """
+    pw = st.secrets.get("APP_PASSWORD", "") if hasattr(st, "secrets") else ""
+    if not pw:
+        return
+    if st.session_state.get("authed"):
+        return
+    st.markdown("### 🔒 秘書AIにログイン")
+    entered = st.text_input("合言葉", type="password")
+    if st.button("入室", type="primary"):
+        if entered == pw:
+            st.session_state["authed"] = True
+            st.rerun()
+        else:
+            st.error("合言葉が違います。")
+    st.stop()
+
+
+_password_gate()
+
+JST = dt.timezone(dt.timedelta(hours=9))
+WORK_START_HOUR, WORK_END_HOUR = 9, 17
+BASE_DIR = Path(__file__).parent
+AVATAR = BASE_DIR / "assets" / "kiyose.png"
+
+URGENCY_OPTS = {"高い": "high", "低い": "low"}
+IMPORTANCE_OPTS = {"高い": "high", "低い": "low"}
+TIME_OPTS = {"すぐ終わる(5〜20分)": "quick", "今日中(30分〜3h)": "today", "数日かかる": "days"}
+
+# 4象限の色（カードのアクセント）
+QUAD_COLOR = {
+    ("high", "high"): "#e2574c",
+    ("low", "high"): "#e0a82e",
+    ("high", "low"): "#3a78c2",
+    ("low", "low"): "#9aa0a6",
+}
+
+
+@st.cache_data
+def _avatar_uri() -> str:
+    if AVATAR.exists():
+        b64 = base64.b64encode(AVATAR.read_bytes()).decode()
+        return f"data:image/png;base64,{b64}"
+    return ""
+
+
+AVATAR_URI = _avatar_uri()
+
+
+# ─────────────────────────────────────────────
+# スタイル(作り込み)
+# ─────────────────────────────────────────────
+def inject_css():
+    st.markdown(
+        """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; }
+#MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
+.stApp { background: linear-gradient(160deg, #f4f1ec 0%, #eef1f6 100%); }
+.block-container { padding-top: 1.2rem; padding-bottom: 6rem; max-width: 1200px; }
+
+/* ヘッダーカード */
+.hero { display:flex; align-items:center; gap:16px; background:#fff;
+  border-radius:20px; padding:16px 22px; box-shadow:0 6px 24px rgba(60,60,90,.08);
+  margin-bottom:18px; }
+.hero img { width:60px; height:60px; border-radius:50%; object-fit:cover;
+  border:2px solid #e7e2d8; }
+.hero .nm { font-weight:700; font-size:1.15rem; color:#2c2c2e; }
+.hero .sub { font-size:.82rem; color:#8a8a90; margin-top:2px; }
+.hero .dot { color:#3fb27f; font-size:.7rem; }
+
+/* チャット吹き出し */
+.chatwrap { display:flex; flex-direction:column; gap:12px; padding:4px 2px 8px; }
+.row { display:flex; align-items:flex-end; gap:10px; }
+.row.bot { justify-content:flex-start; }
+.row.me  { justify-content:flex-end; }
+.ava { width:38px; height:38px; border-radius:50%; object-fit:cover;
+  border:2px solid #e7e2d8; flex:0 0 auto; }
+.bub { max-width:80%; padding:12px 16px; border-radius:18px; line-height:1.75;
+  font-size:.95rem; box-shadow:0 2px 8px rgba(60,60,90,.06); }
+.bub.bot { background:#fff; color:#2c2c2e; border-top-left-radius:5px; }
+.bub.me  { background:linear-gradient(135deg,#5b6b8c,#44537a); color:#fff;
+  border-top-right-radius:5px; }
+.bub p { margin:.2em 0; } .bub ul { margin:.3em 0; padding-left:1.1em; }
+.bub strong { font-weight:700; }
+
+/* 4象限ボード */
+.boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 8px; font-size:1.0rem; }
+.qhead { font-weight:700; font-size:.9rem; padding:6px 10px; border-radius:10px;
+  background:#fff; margin-bottom:2px; }
+div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffcc; border-radius:14px; }
+.stButton button { border-radius:10px; }
+[data-testid="stChatInput"] textarea { font-family:'Noto Sans JP',sans-serif; }
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_css()
+
+
+# ─────────────────────────────────────────────
+# データ取得
+# ─────────────────────────────────────────────
+@st.cache_data(ttl=120, show_spinner=False)
+def load_data():
+    return gc.get_events(days_ahead=1), gc.get_tasks(include_completed=False)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_transcripts(days: int):
+    try:
+        return gc.get_recent_transcripts(days=days)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_work_emails():
+    try:
+        return gc.get_work_emails()
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def refresh():
+    load_data.clear()
+
+
+def fmt_time(raw: str, all_day: bool) -> str:
+    if all_day:
+        return "終日"
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(JST).strftime("%H:%M")
+    except ValueError:
+        return raw
+
+
+def _friendly_error(e: Exception) -> str:
+    if any(c in str(e) for c in ("503", "UNAVAILABLE", "高い需要", "overloaded", "429")):
+        return "いまGemini(無料枠)が混み合っているようです。少し待って🔄か再読み込みで試してください。"
+    return f"うまく応答できませんでした。少し待って再試行してください。（{str(e)[:120]}）"
+
+
+# ─────────────────────────────────────────────
+# サイドバー
+# ─────────────────────────────────────────────
+if AVATAR.exists():
+    st.sidebar.image(str(AVATAR), use_container_width=True)
+st.sidebar.title(f"秘書 {SECRETARY_NAME}")
+mode = st.sidebar.radio("いつの相談？", ["🌅 朝（今日の組み立て）", "🌙 夜（明日の準備）"], index=0)
+focus = st.sidebar.toggle("🗨️ 集中モード（会話だけ）", value=False)
+if st.sidebar.button("🔄 予定とタスクを最新に"):
+    refresh()
+    st.session_state.pop("chat_key", None)
+    st.rerun()
+
+with st.sidebar.expander("📲 スマホ通知（ntfy）"):
+    if st.button("いまのブリーフィングを送る"):
+        try:
+            from notify_ntfy import send_briefing as _sb
+            with st.spinner("送信中…"):
+                res = _sb("morning" if mode.startswith("🌅") else "evening")
+            if res.get("skipped"):
+                st.info(f"本日は送信済みです: {res['skipped']}")
+            elif res.get("ok"):
+                st.success("送りました。スマホを見てください。")
+            else:
+                st.error(f"失敗: {res}")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"通知エラー: {e}")
+    if st.button("テスト通知（ping）"):
+        try:
+            from notify_ntfy import send as _send
+            res = _send("✅ 清瀬リンクのテスト通知",
+                        "これはテスト送信です。ntfy の設定が正しいか確認しています。",
+                        tags=["white_check_mark"])
+            if res.get("ok"):
+                st.success("テスト通知を送りました。スマホで受け取れたら成功です。")
+            else:
+                st.error(f"失敗: {res}")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"通知エラー: {e}")
+
+st.sidebar.caption("稼働は9〜17時。カレンダーの時間軸に沿って今日の流れを提案します。")
+
+
+# ─────────────────────────────────────────────
+# データ・分類・状況
+# ─────────────────────────────────────────────
+try:
+    events, tasks = load_data()
+except FileNotFoundError as e:
+    st.error(str(e)); st.info("README.md の初回セットアップを参照してください。"); st.stop()
+except Exception as e:  # noqa: BLE001
+    st.error(f"Googleへの接続でエラー: {e}"); st.stop()
+
+with st.spinner("状況を確認中..."):
+    labels = classify_tasks(tasks)
+
+today = dt.date.today()
+is_morning = mode.startswith("🌅")
+mode_key = "morning" if is_morning else "evening"
+target_day = today if is_morning else today + dt.timedelta(days=1)
+target_label = "今日" if is_morning else "明日"
+
+recent_transcripts = load_transcripts(days=2)
+recent_emails = load_work_emails() if gc.is_authed("work") else []
+auto_transcript = "\n\n".join(
+    f"=== {t['name']} ({t['modified'][:10]}) ===\n{t['text']}" for t in recent_transcripts
+)
+schedule = gc.compute_schedule(events, target_day, work_start=WORK_START_HOUR, work_end=WORK_END_HOUR)
+context_block = build_context_block(events, tasks, labels, schedule,
+                                    transcript=auto_transcript, emails=recent_emails,
+                                    target_label=target_label)
+
+
+# ─────────────────────────────────────────────
+# ヘッダーカード
+# ─────────────────────────────────────────────
+wd = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
+st.markdown(
+    f"""
+<div class="hero">
+  <img src="{AVATAR_URI}"/>
+  <div>
+    <div class="nm">{SECRETARY_NAME} <span class="dot">●</span><span class="sub"> オンライン</span></div>
+    <div class="sub">{today:%Y年%m月%d日}（{wd}）・{target_label}の時間割を一緒に組みましょう</div>
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+
+# ─────────────────────────────────────────────
+# 会話の準備（清瀬リンクが先に話す）
+# ─────────────────────────────────────────────
+chat_key = f"{today.isoformat()}_{mode_key}"
+if st.session_state.get("chat_key") != chat_key:
+    st.session_state["chat_key"] = chat_key
+    # SQLiteから過去の会話を復元（同じ日・同じモードの履歴を引き継ぐ）
+    st.session_state["messages"] = storage.load_messages(today.isoformat(), mode_key)
+    st.session_state["task_candidates"] = []
+
+if is_morning:
+    opening = (
+        "おはよう、と一言挨拶してから、今日(9〜17時)の時間割のたたき台を時刻つきで提案してください。"
+        "【必須】固定の予定(会議・セッション)は省略せず、必ずその時刻のまま時間割に含めること。"
+        "予定の合間の空き時間に、優先度の高いタスクから当てはめてください。"
+        "最後に「この流れでいけそうですか？調整したいところはありますか？」と短く尋ねてください。"
+    )
+else:
+    opening = (
+        "今日もおつかれさまでした、とねぎらってから、"
+        "【明日の予定(9〜17時)】から逆算して、明日の時間割のたたき台を時刻つきで提示してください。"
+        "明日の固定予定(会議・セッション等)は省略禁止。その合間の空き時間に、"
+        "未完了タスクの中で『明日着手すべきもの』を優先度順に当てはめてください。"
+        "重要だが緊急ではないものも、明日できる最小ステップに分解して入れてください。"
+        "最後に『明日はこの順で進めて大丈夫そうですか？追加でやりたいことや、外したいものはありますか？』と短く尋ねてください。"
+    )
+
+if not st.session_state["messages"]:
+    try:
+        with st.spinner(f"{SECRETARY_NAME}が{target_label}の流れを考えています…"):
+            first = secretary_chat([], context_block, user_input=opening)
+        st.session_state["messages"].append({"role": "assistant", "content": first})
+        storage.save_message(today.isoformat(), mode_key, "assistant", first)
+    except Exception as e:  # noqa: BLE001
+        st.warning(_friendly_error(e))
+        if st.button("↻ もう一度試す"):
+            st.rerun()
+        st.stop()
+
+
+def render_chat():
+    rows = []
+    for m in st.session_state["messages"]:
+        body = _md.markdown(m["content"], extensions=["nl2br", "sane_lists"])
+        if m["role"] == "assistant":
+            rows.append(
+                f'<div class="row bot"><img class="ava" src="{AVATAR_URI}"/>'
+                f'<div class="bub bot">{body}</div></div>'
+            )
+        else:
+            rows.append(f'<div class="row me"><div class="bub me">{body}</div></div>')
+    st.markdown(f'<div class="chatwrap">{"".join(rows)}</div>', unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────
+# タスク（4象限ボード）描画パーツ
+# ─────────────────────────────────────────────
+def render_task_extractor():
+    """会話末尾の『話した内容をタスク化』フロー。
+
+    朝モード: 今日着手すべきタスクを抽出して Google タスクに追加
+    夜モード: 明日やるべきタスクを抽出して期限=明日で Google タスクに追加
+    """
+    btn_label = (
+        "✨ ここまでの会話を今日のタスクに反映"
+        if is_morning
+        else "📅 ここまでの会話から明日のタスクを作る"
+    )
+    cols = st.columns([4, 1])
+    if cols[0].button(btn_label, use_container_width=True, type="secondary"):
+        try:
+            with st.spinner(f"{SECRETARY_NAME}が会話からタスクを抜き出しています…"):
+                cands = extract_tasks_from_conversation(
+                    st.session_state["messages"],
+                    context_block,
+                    target_label=target_label,
+                    target_date_iso=target_day.isoformat(),
+                    mode=mode_key,
+                )
+            st.session_state["task_candidates"] = cands
+            if not cands:
+                st.info("会話の中から新規追加すべきタスクは見つかりませんでした。")
+        except Exception as e:  # noqa: BLE001
+            st.warning(_friendly_error(e))
+    if cols[1].button("クリア", use_container_width=True):
+        st.session_state["task_candidates"] = []
+        st.rerun()
+
+    cands = st.session_state.get("task_candidates") or []
+    if not cands:
+        return
+
+    st.markdown("#### 抽出されたタスク候補（編集してから追加）")
+    edited_rows = []
+    for i, c in enumerate(cands):
+        with st.container(border=True):
+            r1 = st.columns([1, 6, 3])
+            include = r1[0].checkbox("追加", value=True, key=f"cand_inc_{i}")
+            title = r1[1].text_input("タイトル", value=c["title"], key=f"cand_title_{i}",
+                                     label_visibility="collapsed")
+            due_default = c.get("due") or (target_day.isoformat() if not is_morning else "")
+            has_due = bool(due_default)
+            due_on = r1[2].checkbox("期限あり",
+                                    value=has_due, key=f"cand_due_chk_{i}")
+            r2 = st.columns(4)
+            u_idx = 0 if c["urgency"] == "high" else 1
+            i_idx = 0 if c["importance"] == "high" else 1
+            t_idx = next((n for n, v in enumerate(TIME_OPTS.values()) if v == c["time"]), 1)
+            u = r2[0].selectbox("緊急度", list(URGENCY_OPTS), index=u_idx, key=f"cand_u_{i}")
+            imp = r2[1].selectbox("重要度", list(IMPORTANCE_OPTS), index=i_idx, key=f"cand_i_{i}")
+            tm = r2[2].selectbox("所要時間", list(TIME_OPTS), index=t_idx, key=f"cand_t_{i}")
+            due_val = r2[3].date_input(
+                "期限", value=target_day if due_on else today,
+                key=f"cand_due_{i}", disabled=not due_on, label_visibility="visible")
+            if c.get("reason"):
+                st.caption(f"理由: {c['reason']}")
+            edited_rows.append({
+                "include": include,
+                "title": title.strip(),
+                "notes": c.get("notes", ""),
+                "urgency": URGENCY_OPTS[u],
+                "importance": IMPORTANCE_OPTS[imp],
+                "time": TIME_OPTS[tm],
+                "due": due_val.isoformat() if due_on else None,
+                "reason": c.get("reason", ""),
+            })
+
+    if st.button("✅ チェックしたタスクをGoogleタスクに追加",
+                 type="primary", use_container_width=True):
+        added = 0
+        for r in edited_rows:
+            if not r["include"] or not r["title"]:
+                continue
+            ext_id = storage.save_extracted_task(
+                date=target_day.isoformat(), mode=mode_key, source="conversation",
+                title=r["title"], notes=r["notes"], due=r["due"],
+                urgency=r["urgency"], importance=r["importance"],
+                time_label=r["time"],
+            )
+            try:
+                created = gc.add_task(r["title"], notes=r["notes"], due=r["due"])
+                set_manual_label(created["id"], r["urgency"], r["importance"], r["time"])
+                storage.mark_task_pushed(ext_id, created["id"])
+                added += 1
+            except Exception as e:  # noqa: BLE001
+                st.warning(f"追加失敗: {r['title']} — {e}")
+        if added:
+            st.success(f"{added}件のタスクをGoogleタスクに追加しました。")
+            st.session_state["task_candidates"] = []
+            refresh()
+            st.rerun()
+
+
+def render_task(t: dict):
+    lb = labels.get(t["id"], {})
+    time_badge = TIME_LABEL.get(lb.get("time", "today"), "")
+    manual_mark = "✋" if lb.get("manual") else ""
+    due = ""
+    if t.get("due"):
+        try:
+            d = dt.datetime.fromisoformat(t["due"].replace("Z", "+00:00")).date()
+            due = f"〆{d:%m/%d}"
+        except ValueError:
+            pass
+    c_chk, c_lbl = st.columns([1, 9])
+    with c_chk:
+        checked = st.checkbox(t["title"], key=f"chk_{t['id']}", label_visibility="collapsed")
+    with c_lbl:
+        st.markdown(f"{t['title']}　`{time_badge}`{manual_mark}" + (f"　`{due}`" if due else ""))
+        with st.popover("⚙️"):
+            u = st.selectbox("緊急度", list(URGENCY_OPTS),
+                             index=0 if lb.get("urgency") == "high" else 1, key=f"u_{t['id']}")
+            imp = st.selectbox("重要度", list(IMPORTANCE_OPTS),
+                               index=0 if lb.get("importance") == "high" else 1, key=f"i_{t['id']}")
+            tm_idx = next((n for n, v in enumerate(TIME_OPTS.values()) if v == lb.get("time")), 1)
+            tm = st.selectbox("所要時間", list(TIME_OPTS), index=tm_idx, key=f"t_{t['id']}")
+            if st.button("この分類で保存", key=f"save_{t['id']}", use_container_width=True):
+                set_manual_label(t["id"], URGENCY_OPTS[u], IMPORTANCE_OPTS[imp], TIME_OPTS[tm])
+                refresh(); st.rerun()
+            if st.button("AI判定に戻す", key=f"auto_{t['id']}", use_container_width=True):
+                clear_manual_label(t["id"]); refresh(); st.rerun()
+            if st.button("🗑 このタスクを削除", key=f"del_{t['id']}", use_container_width=True):
+                gc.delete_task(t["tasklist_id"], t["id"]); clear_manual_label(t["id"])
+                st.toast(f"🗑 削除: {t['title']}"); refresh(); st.rerun()
+    if checked:
+        gc.complete_task(t["tasklist_id"], t["id"])
+        st.toast(f"✅ 完了: {t['title']}"); refresh(); st.rerun()
+
+
+def render_board():
+    st.markdown('<div class="boardttl">🗂️ タスク（緊急度 × 重要度）</div>', unsafe_allow_html=True)
+    with st.expander("➕ タスクを追加"):
+        with st.form("add_task_form", clear_on_submit=True):
+            new_title = st.text_input("やること", placeholder="例：企画書を仕上げる")
+            has_due = st.checkbox("期限あり")
+            due_date = st.date_input("期限", value=today, label_visibility="collapsed")
+            cls_mode = st.radio("優先度", ["AIにおまかせ", "自分で指定"], horizontal=True)
+            m1, m2, m3 = st.columns(3)
+            u = m1.selectbox("緊急度", list(URGENCY_OPTS), key="add_u")
+            imp = m2.selectbox("重要度", list(IMPORTANCE_OPTS), key="add_i")
+            tm = m3.selectbox("所要時間", list(TIME_OPTS), key="add_t")
+            if st.form_submit_button("Googleタスクに追加", type="primary") and new_title.strip():
+                created = gc.add_task(new_title.strip(),
+                                      due=due_date.isoformat() if has_due else None)
+                if cls_mode == "自分で指定":
+                    set_manual_label(created["id"], URGENCY_OPTS[u], IMPORTANCE_OPTS[imp], TIME_OPTS[tm])
+                st.toast(f"➕ 追加: {new_title}"); refresh(); st.rerun()
+
+    quadrants = {k: [] for k in QUADRANT_LABEL}
+    for t in tasks:
+        lb = labels.get(t["id"], {})
+        quadrants[(lb.get("urgency", "low"), lb.get("importance", "low"))].append(t)
+    for key in [("high", "high"), ("low", "high"), ("high", "low"), ("low", "low")]:
+        with st.container(border=True):
+            st.markdown(
+                f'<div class="qhead" style="border-left:5px solid {QUAD_COLOR[key]}">'
+                f'{QUADRANT_LABEL[key]}</div>', unsafe_allow_html=True)
+            items = quadrants[key]
+            if not items:
+                st.caption("なし")
+            for t in items:
+                render_task(t)
+
+
+# ─────────────────────────────────────────────
+# レイアウト：左=会話 / 右=4象限ボード（集中モードなら会話のみ）
+# ─────────────────────────────────────────────
+if focus:
+    render_chat()
+    render_task_extractor()
+else:
+    col_chat, col_board = st.columns([3, 2], gap="large")
+    with col_chat:
+        render_chat()
+        render_task_extractor()
+    with col_board:
+        render_board()
+
+
+# 入力（音声入力もここから）
+if prompt := st.chat_input("気分・優先したいこと・調整したい時間帯など…（音声入力でもOK）"):
+    st.session_state["messages"].append({"role": "user", "content": prompt})
+    storage.save_message(today.isoformat(), mode_key, "user", prompt)
+    try:
+        with st.spinner("考えています…"):
+            reply = secretary_chat(st.session_state["messages"], context_block)
+        st.session_state["messages"].append({"role": "assistant", "content": reply})
+        storage.save_message(today.isoformat(), mode_key, "assistant", reply)
+    except Exception as e:  # noqa: BLE001
+        err_msg = "（" + _friendly_error(e) + "）"
+        st.session_state["messages"].append({"role": "assistant", "content": err_msg})
+        storage.save_message(today.isoformat(), mode_key, "assistant", err_msg)
+    st.rerun()
+
+
+# 情報源 / 仕事メール連携（サイドバー）
+with st.sidebar.expander("📥 秘書が見ている情報源"):
+    for e in [e for e in events if (e["start"] or "").startswith(today.isoformat())]:
+        st.markdown(f"- {fmt_time(e['start'], e['all_day'])} {e['title']}　_{e.get('calendar','')}_")
+    if recent_transcripts:
+        st.caption("Zoom文字起こし:")
+        for t in recent_transcripts:
+            st.markdown(f"- 📝 {t['name']} ({t['modified'][:10]})")
+    if gc.is_authed("work"):
+        st.caption(f"仕事メール {len(recent_emails)}件")
+    else:
+        st.info("仕事用メール未連携")
+        if st.button("📧 仕事用メールを連携"):
+            try:
+                gc.connect_work_email(); load_work_emails.clear()
+                st.success("連携しました"); st.rerun()
+            except Exception as e:  # noqa: BLE001
+                st.error(f"失敗: {e}")

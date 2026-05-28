@@ -1,0 +1,21 @@
+# 秘密情報・個人データは絶対にコミットしない
+credentials.json
+.streamlit/secrets.toml
+
+# 個人データ・キャッシュ・トークン・DB（全てローカル/Cloud 側の Secrets で管理）
+data/
+
+# Streamlit ログ
+_srv*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS / エディタ
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
