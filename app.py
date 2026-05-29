@@ -168,43 +168,63 @@ def inject_css():
         """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
-html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; }
+html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2c2e; }
 #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
-.stApp { background: linear-gradient(160deg, #f4f1ec 0%, #eef1f6 100%); }
-.block-container { padding-top: 1.2rem; padding-bottom: 6rem; max-width: 1200px; }
+.stApp { background: linear-gradient(160deg, #fafbff 0%, #f3f0fa 60%, #ecf2fb 100%); }
+.block-container { padding-top: 1.4rem; padding-bottom: 6rem; max-width: 1240px; }
 
 /* ヘッダーカード */
-.hero { display:flex; align-items:center; gap:16px; background:#fff;
-  border-radius:20px; padding:16px 22px; box-shadow:0 6px 24px rgba(60,60,90,.08);
-  margin-bottom:18px; }
-.hero img { width:60px; height:60px; border-radius:50%; object-fit:cover;
-  border:2px solid #e7e2d8; }
-.hero .nm { font-weight:700; font-size:1.15rem; color:#2c2c2e; }
+.hero { display:flex; align-items:center; gap:18px; background:#ffffff;
+  border-radius:22px; padding:18px 24px; box-shadow:0 8px 26px rgba(80,80,130,.07);
+  margin-bottom:18px; border:1px solid rgba(200,200,230,.4); }
+.hero img { width:62px; height:62px; border-radius:50%; object-fit:cover;
+  border:2px solid #eee5f5; }
+.hero .nm { font-weight:700; font-size:1.18rem; color:#2c2c2e; }
 .hero .sub { font-size:.82rem; color:#8a8a90; margin-top:2px; }
 .hero .dot { color:#3fb27f; font-size:.7rem; }
 
-/* チャット吹き出し */
-.chatwrap { display:flex; flex-direction:column; gap:12px; padding:4px 2px 8px; }
+/* チャット吹き出し（モック寄せ：丸み・余白・パステル影） */
+.chatwrap { display:flex; flex-direction:column; gap:14px; padding:6px 2px 10px; }
 .row { display:flex; align-items:flex-end; gap:10px; }
 .row.bot { justify-content:flex-start; }
 .row.me  { justify-content:flex-end; }
-.ava { width:38px; height:38px; border-radius:50%; object-fit:cover;
-  border:2px solid #e7e2d8; flex:0 0 auto; }
-.bub { max-width:80%; padding:12px 16px; border-radius:18px; line-height:1.75;
-  font-size:.95rem; box-shadow:0 2px 8px rgba(60,60,90,.06); }
-.bub.bot { background:#fff; color:#2c2c2e; border-top-left-radius:5px; }
-.bub.me  { background:linear-gradient(135deg,#5b6b8c,#44537a); color:#fff;
-  border-top-right-radius:5px; }
+.ava { width:40px; height:40px; border-radius:50%; object-fit:cover;
+  border:2px solid #eee5f5; flex:0 0 auto; }
+.bub { max-width:82%; padding:14px 18px; border-radius:20px; line-height:1.8;
+  font-size:.96rem; box-shadow:0 3px 12px rgba(80,80,130,.06); }
+.bub.bot { background:#ffffff; color:#2c2c2e; border-top-left-radius:6px;
+  border:1px solid rgba(200,200,230,.4); }
+.bub.me  { background:linear-gradient(135deg,#7a6dd6,#6358c5); color:#fff;
+  border-top-right-radius:6px; }
 .bub p { margin:.2em 0; } .bub ul { margin:.3em 0; padding-left:1.1em; }
 .bub strong { font-weight:700; }
 
-/* 4象限ボード */
-.boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 8px; font-size:1.0rem; }
-.qhead { font-weight:700; font-size:.9rem; padding:6px 10px; border-radius:10px;
-  background:#fff; margin-bottom:2px; }
-div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffcc; border-radius:14px; }
-.stButton button { border-radius:10px; }
+/* 時刻バッジ（時間割を秘書がmarkdownで返す時に効くクラス） */
+.timebadge { display:inline-block; padding:4px 10px; border-radius:8px;
+  font-size:.78rem; font-weight:600; margin-right:8px;
+  background:#ede8f9; color:#5a4ab8; }
+
+/* タスクマトリックス */
+.boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 10px; font-size:1.02rem; }
+.qhead { font-weight:700; font-size:.88rem; padding:8px 12px; border-radius:10px;
+  background:#fff; margin-bottom:6px; }
+div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffcc;
+  border-radius:14px; border:1px solid rgba(200,200,230,.35); }
+.stButton button { border-radius:12px; }
+.stButton button[kind="primary"] {
+  background:linear-gradient(135deg,#7a6dd6,#6358c5); border:none; }
 [data-testid="stChatInput"] textarea { font-family:'Noto Sans JP',sans-serif; }
+[data-testid="stChatInput"] { border-radius:18px; }
+
+/* サイドバー */
+[data-testid="stSidebar"] { background:#ffffff; border-right:1px solid rgba(200,200,230,.4); }
+[data-testid="stSidebar"] .stMarkdown h2 { font-size:1.05rem; color:#3a3a3e; }
+
+/* 今日のアドバイス枠 */
+.advice { background:#f6f3ff; border-radius:14px; padding:14px 18px;
+  border:1px solid #e5dffb; margin-top:14px; }
+.advice .ttl { font-weight:700; color:#5a4ab8; font-size:.92rem; margin-bottom:4px; }
+.advice .body { color:#3a3a3e; font-size:.88rem; line-height:1.7; }
 </style>
         """,
         unsafe_allow_html=True,
@@ -307,6 +327,20 @@ with st.sidebar.expander("📲 スマホ通知（ntfy）"):
             st.error(f"通知エラー: {e}")
 
 st.sidebar.caption("稼働は9〜17時。カレンダーの時間軸に沿って今日の流れを提案します。")
+
+# クイックメモ（SQLiteに保存）
+with st.sidebar:
+    st.markdown("### 📝 クイックメモ")
+    _qm_current = storage.load_quickmemo()
+    _qm_new = st.text_area(
+        "気づいたことをメモ", value=_qm_current,
+        key="quickmemo_input", height=120,
+        label_visibility="collapsed",
+        placeholder="気づいたことを\nメモできます…",
+    )
+    if _qm_new != _qm_current:
+        storage.save_quickmemo(_qm_new)
+        st.caption("✓ 自動保存")
 
 
 # ─────────────────────────────────────────────
@@ -556,8 +590,34 @@ def render_task(t: dict):
         st.toast(f"✅ 完了: {t['title']}"); refresh(); st.rerun()
 
 
+QUAD_SHORT = {
+    ("high", "high"): "🔴 緊急 × 重要",
+    ("low", "high"): "🟡 重要だが緊急でない",
+    ("high", "low"): "🔵 緊急だが重要度が低い",
+    ("low", "low"): "⚪ 緊急度も重要度も低い",
+}
+
+
+def render_quadrant(key: tuple, items: list):
+    """4象限カード1枚分を描画する。"""
+    color = QUAD_COLOR[key]
+    with st.container(border=True):
+        st.markdown(
+            f'<div class="qhead" style="border-left:5px solid {color}">'
+            f'{QUAD_SHORT[key]}</div>',
+            unsafe_allow_html=True,
+        )
+        if not items:
+            st.caption("なし")
+        for t in items:
+            render_task(t)
+
+
 def render_board():
-    st.markdown('<div class="boardttl">🗂️ タスク（緊急度 × 重要度）</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="boardttl">🗂️ タスクマトリックス（緊急度 × 重要度）</div>',
+        unsafe_allow_html=True,
+    )
     with st.expander("➕ タスクを追加"):
         with st.form("add_task_form", clear_on_submit=True):
             new_title = st.text_input("やること", placeholder="例：企画書を仕上げる")
@@ -579,21 +639,57 @@ def render_board():
     for t in tasks:
         lb = labels.get(t["id"], {})
         quadrants[(lb.get("urgency", "low"), lb.get("importance", "low"))].append(t)
-    for key in [("high", "high"), ("low", "high"), ("high", "low"), ("low", "low")]:
-        with st.container(border=True):
-            st.markdown(
-                f'<div class="qhead" style="border-left:5px solid {QUAD_COLOR[key]}">'
-                f'{QUADRANT_LABEL[key]}</div>', unsafe_allow_html=True)
-            items = quadrants[key]
-            if not items:
-                st.caption("なし")
-            for t in items:
-                render_task(t)
+
+    # 2×2 グリッド配置（モックUIに合わせて）
+    # 上段: 左=重要だが緊急でない / 右=緊急かつ重要
+    # 下段: 左=重要度が低く緊急でない / 右=緊急だが重要度が低い
+    st.caption("↑ 重要度 高　／　→ 緊急度 高")
+    row1_left, row1_right = st.columns(2, gap="small")
+    with row1_left:
+        render_quadrant(("low", "high"), quadrants[("low", "high")])
+    with row1_right:
+        render_quadrant(("high", "high"), quadrants[("high", "high")])
+    row2_left, row2_right = st.columns(2, gap="small")
+    with row2_left:
+        render_quadrant(("low", "low"), quadrants[("low", "low")])
+    with row2_right:
+        render_quadrant(("high", "low"), quadrants[("high", "low")])
 
 
 # ─────────────────────────────────────────────
 # レイアウト：左=会話 / 右=4象限ボード（集中モードなら会話のみ）
 # ─────────────────────────────────────────────
+def render_today_advice():
+    """ルールベースの『今日のアドバイス』。Kiyo Blackらしく短くドライに。"""
+    parts = []
+    busy_min = schedule.get("busy_minutes", 0)
+    free_min = schedule.get("free_minutes", 0)
+    high_high = sum(
+        1 for t in tasks
+        if labels.get(t["id"], {}).get("urgency") == "high"
+        and labels.get(t["id"], {}).get("importance") == "high"
+    )
+    if busy_min > 240:
+        parts.append("今日は予定詰めめ。制作系は最小着手で。")
+    if high_high >= 3:
+        parts.append(f"緊急×重要が{high_high}件。まずそこから片付ける。")
+    if free_min and free_min < 60:
+        parts.append("空き時間が少ない。スキマ時間で軽いやつをまとめて処理。")
+    if not parts:
+        if high_high == 0:
+            parts.append("今日は緊急タスクなし。重要だが急がないやつ進めるチャンスだよ。")
+        else:
+            parts.append("時間は十分。優先度通りに淡々と進めればいい。")
+    advice_text = " / ".join(parts)
+    st.markdown(
+        f'<div class="advice">'
+        f'<div class="ttl">✨ 今日のアドバイス</div>'
+        f'<div class="body">{advice_text}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 if focus:
     render_chat()
     render_task_extractor()
@@ -604,6 +700,7 @@ else:
         render_task_extractor()
     with col_board:
         render_board()
+        render_today_advice()
 
 
 # 入力（音声入力もここから）

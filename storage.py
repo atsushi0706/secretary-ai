@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS notifications (
     error       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_notif_sent ON notifications(sent_at);
+
+CREATE TABLE IF NOT EXISTS quickmemo (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    body        TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL
+);
 """
 
 
@@ -205,6 +211,23 @@ def already_notified(channel: str, type_: str, date: str) -> bool:
             (channel, type_, f"{date}%"),
         ).fetchone()
     return bool(row)
+
+
+# ── クイックメモ（サイドバー用・1行レコード） ──────────────────
+def load_quickmemo() -> str:
+    with _conn() as con:
+        row = con.execute("SELECT body FROM quickmemo WHERE id=1").fetchone()
+    return row["body"] if row else ""
+
+
+def save_quickmemo(body: str) -> None:
+    with _conn() as con:
+        con.execute(
+            "INSERT INTO quickmemo(id, body, updated_at) VALUES(1, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET body=excluded.body,"
+            " updated_at=excluded.updated_at",
+            (body, _now_iso()),
+        )
 
 
 # ── ユーティリティ ─────────────────────────────────────────
