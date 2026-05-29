@@ -300,17 +300,27 @@ SECRETARY_PERSONA = """あなたは「清瀬リンク」。ユーザー専属の
 
 def build_context_block(events: list[dict], tasks: list[dict], labels: dict,
                         schedule: dict, transcript: str = "", emails: list[dict] | None = None,
-                        target_label: str = "今日") -> str:
+                        target_label: str = "今日", now: dt.datetime | None = None) -> str:
     """秘書に渡す『いまの状況』を1つのテキストにまとめる。"""
-    parts = [
+    parts = []
+    if now is not None:
+        parts.append(
+            f"【現在時刻】{now.strftime('%Y-%m-%d %H:%M')}（この時刻より前の枠にタスクを入れてはいけない。"
+            f"提案する時間割はこの時刻以降からスタートする）"
+        )
+    parts.extend([
         f"日付の対象: {target_label}（稼働は{schedule.get('work_start', 9)}〜{schedule.get('work_end', 17)}時）",
         "■固定の予定（必ずこの時刻のまま時間割に載せる。省略禁止）:\n"
         + schedule.get("busy_text", "  なし"),
-        f"空き時間（ここにタスクを入れる。計{schedule.get('free_minutes', 0)}分）:\n"
+        f"空き時間（ここにタスクを入れる。計{schedule.get('free_minutes', 0)}分。"
+        f"現在時刻より前の枠は既に含まれていない）:\n"
         + schedule.get("free_text", ""),
-    ]
+    ])
     if schedule.get("after_hours_text"):
-        parts.append("稼働時間外(無視可):\n" + schedule["after_hours_text"])
+        parts.append(
+            "■夜の予定（稼働時間外。時間割本体には入れず、最後に『夜の予定として参考に』"
+            "という形で時刻付きで併記する）:\n" + schedule["after_hours_text"]
+        )
 
     task_lines = []
     for t in tasks:

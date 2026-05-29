@@ -324,10 +324,12 @@ recent_emails = load_work_emails() if gc.is_authed("work") else []
 auto_transcript = "\n\n".join(
     f"=== {t['name']} ({t['modified'][:10]}) ===\n{t['text']}" for t in recent_transcripts
 )
-schedule = gc.compute_schedule(events, target_day, work_start=WORK_START_HOUR, work_end=WORK_END_HOUR)
+now_jst = dt.datetime.now(JST)
+schedule = gc.compute_schedule(events, target_day, work_start=WORK_START_HOUR,
+                               work_end=WORK_END_HOUR, now=now_jst)
 context_block = build_context_block(events, tasks, labels, schedule,
                                     transcript=auto_transcript, emails=recent_emails,
-                                    target_label=target_label)
+                                    target_label=target_label, now=now_jst)
 
 
 # ─────────────────────────────────────────────
@@ -360,9 +362,12 @@ if st.session_state.get("chat_key") != chat_key:
 
 if is_morning:
     opening = (
-        "おはよう、と一言挨拶してから、今日(9〜17時)の時間割のたたき台を時刻つきで提案してください。"
-        "【必須】固定の予定(会議・セッション)は省略せず、必ずその時刻のまま時間割に含めること。"
+        f"挨拶（今が朝なら『おはよう』、昼以降なら『おつかれさまです』など現在時刻に合ったもの）から始めて、"
+        f"今日の【現在時刻 {now_jst.strftime('%H:%M')} から 17時まで】の時間割のたたき台を時刻つきで提案してください。"
+        "【絶対】現在時刻より前の枠（既に過ぎた時間）には何も入れないこと。"
+        "【絶対】固定の予定(会議・セッション)は省略せず、必ずその時刻のまま時間割に含めること。"
         "予定の合間の空き時間に、優先度の高いタスクから当てはめてください。"
+        "17時以降に夜の予定（Zoom等）がある場合は、時間割の末尾に『夜の予定として参考』として時刻つきで併記する。"
         "最後に「この流れでいけそうですか？調整したいところはありますか？」と短く尋ねてください。"
     )
 else:
@@ -372,6 +377,7 @@ else:
         "明日の固定予定(会議・セッション等)は省略禁止。その合間の空き時間に、"
         "未完了タスクの中で『明日着手すべきもの』を優先度順に当てはめてください。"
         "重要だが緊急ではないものも、明日できる最小ステップに分解して入れてください。"
+        "明日の17時以降に夜の予定（Zoom等）がある場合は、時間割の末尾に『夜の予定として参考』として時刻つきで併記する。"
         "最後に『明日はこの順で進めて大丈夫そうですか？追加でやりたいことや、外したいものはありますか？』と短く尋ねてください。"
     )
 

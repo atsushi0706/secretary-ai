@@ -345,14 +345,25 @@ def uncomplete_task(tasklist_id: str, task_id: str) -> None:
 
 
 def compute_schedule(events: list[dict], target_date: dt.date,
-                     work_start: int = 9, work_end: int = 17) -> dict:
+                     work_start: int = 9, work_end: int = 17,
+                     now: dt.datetime | None = None) -> dict:
     """指定日の『予定・空き時間』を計算して人が読める形でまとめる。
 
-    work_end(既定17時)までを稼働時間とみなす。終日予定や稼働時間外の予定は
-    空き時間計算からは除外するが、参考として一覧には載せる。
+    work_end(既定17時)までを稼働時間とみなす。終日予定は空き時間計算から
+    除外して別途載せる。稼働時間外(夜)の予定は『夜の予定』として参考表示する。
+
+    now を渡すと、target_date が今日の場合に限り、now より前の時間帯は
+    『すでに過ぎた時間』として空き時間計算から除外する。
+    例) 14時にアプリを開いたら、9〜14時は提案対象から外れる。
     """
     day_start = dt.datetime.combine(target_date, dt.time(work_start), JST)
     day_end = dt.datetime.combine(target_date, dt.time(work_end), JST)
+
+    # 現在時刻より前は除外（今日のみ）
+    if now is not None and target_date == now.astimezone(JST).date():
+        now_jst = now.astimezone(JST)
+        if now_jst > day_start:
+            day_start = min(now_jst, day_end)
 
     timed = []      # 稼働時間に重なる予定
     all_day = []    # 終日予定
