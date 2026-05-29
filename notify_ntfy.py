@@ -151,13 +151,24 @@ def build_briefing_short(mode: Literal["morning", "evening"],
         title = f"🌙 清瀬リンクから（明日 {target_date:%m/%d}の準備）"
         head = "今日もおつかれさまでした。明日の段取りができています。"
 
-    body = (
-        f"{head}\n\n"
-        f"■ 予定（上位）\n{_format_top_events(events, date_iso)}\n\n"
-        f"■ タスク（優先順）\n{_format_top_tasks(tasks, labels)}\n\n"
-        "詳しい時間割は秘書AIで見られます。"
-    )
-    return title, body
+    body_lines = [
+        head,
+        "",
+        "■ 予定（上位）",
+        _format_top_events(events, date_iso),
+        "",
+        "■ タスク（優先順）",
+        _format_top_tasks(tasks, labels),
+        "",
+    ]
+    # 本文末尾にURLをテキストで含める（iOSでもタップで開けるように）
+    click_url = _secret("NTFY_CLICK_URL", "")
+    if click_url:
+        body_lines.append("👇 詳しい時間割を見る")
+        body_lines.append(click_url)
+    else:
+        body_lines.append("詳しい時間割は秘書AIで見られます。")
+    return title, "\n".join(body_lines)
 
 
 def send_briefing(mode: Literal["morning", "evening"]) -> dict:
