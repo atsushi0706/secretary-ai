@@ -8,11 +8,18 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import os
 from pathlib import Path
 
 import markdown as _md
 import streamlit as st
+
+try:
+    import extra_streamlit_components as stx
+    _HAS_STX = True
+except Exception:  # noqa: BLE001
+    _HAS_STX = False
 
 import google_client as gc
 import storage
@@ -72,20 +79,50 @@ if "WORK_EMAIL" in st.secrets:
     os.environ["WORK_EMAIL"] = st.secrets["WORK_EMAIL"]
 
 
+_AUTH_COOKIE = "secretary_authed"
+
+
+def _auth_token(pw: str) -> str:
+    return hashlib.sha256(f"{pw}::secretary-ai-cookie-v1".encode()).hexdigest()[:32]
+
+
+def _cookie_manager():
+    """セッションに1つだけ CookieManager を持つ。"""
+    if not _HAS_STX:
+        return None
+    if "_cm" not in st.session_state:
+        st.session_state["_cm"] = stx.CookieManager(key="secretary_cm")
+    return st.session_state["_cm"]
+
+
 def _password_gate():
     """secrets に APP_PASSWORD があれば、入力が一致するまで画面を出さない。
-    ローカル運用(未設定)では素通りする。
+    一度入室すれば cookie に記録され、90日間は再入力不要(同じブラウザ限定)。
+    ローカル運用(APP_PASSWORD未設定)では素通りする。
     """
     pw = st.secrets.get("APP_PASSWORD", "") if hasattr(st, "secrets") else ""
     if not pw:
         return
     if st.session_state.get("authed"):
         return
+
+    expected = _auth_token(pw)
+    cm = _cookie_manager()
+    if cm is not None:
+        stored = cm.get(_AUTH_COOKIE)
+        if stored == expected:
+            st.session_state["authed"] = True
+            return
+
     st.markdown("### 🔒 秘書AIにログイン")
+    st.caption("一度入室すれば、このブラウザでは次回から自動でログインされます。")
     entered = st.text_input("合言葉", type="password")
     if st.button("入室", type="primary"):
         if entered == pw:
             st.session_state["authed"] = True
+            if cm is not None:
+                cm.set(_AUTH_COOKIE, expected,
+                       expires_at=dt.datetime.now() + dt.timedelta(days=90))
             st.rerun()
         else:
             st.error("合言葉が違います。")
