@@ -60,13 +60,22 @@ def _encode_header(value: str) -> str:
 
 def send(title: str, body: str, *, click: str | None = None,
          priority: str = "default", tags: list[str] | None = None) -> dict:
-    """ntfy にメッセージを1通送る。送信履歴は notifications テーブルに残す。"""
+    """ntfy にメッセージを1通送る。送信履歴は notifications テーブルに残す。
+
+    click(=タップで開くURL)が指定されている場合は本文末尾にもテキストで添付する。
+    ntfyのClickヘッダーは iOS で動かないことが多いため、本文内にURLを置いて
+    自動リンク化させる二重保険。
+    """
     topic = _secret("NTFY_TOPIC")
     if not topic:
         raise RuntimeError("NTFY_TOPIC が未設定です。.streamlit/secrets.toml に追加してください。")
     server = _secret("NTFY_SERVER", DEFAULT_SERVER).rstrip("/")
     if not click:
         click = _secret("NTFY_CLICK_URL", "") or None
+
+    # 本文にまだURLが含まれていなければ末尾に追加する
+    if click and click not in body:
+        body = f"{body}\n\n👇 秘書AIを開く\n{click}"
 
     headers: dict[str, str] = {
         "Content-Type": "text/plain; charset=utf-8",
