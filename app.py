@@ -171,7 +171,7 @@ def inject_css():
 html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2c2e; }
 #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
 .stApp { background: linear-gradient(160deg, #fafbff 0%, #f3f0fa 60%, #ecf2fb 100%); }
-.block-container { padding-top: 1.4rem; padding-bottom: 6rem; max-width: 1240px; }
+.block-container { padding-top: 1.4rem; padding-bottom: 6rem; max-width: 1480px; }
 
 /* ヘッダーカード */
 .hero { display:flex; align-items:center; gap:18px; background:#ffffff;
@@ -721,7 +721,8 @@ if focus:
     render_chat()
     render_task_extractor()
 else:
-    col_chat, col_board = st.columns([3, 2], gap="large")
+    # チャット側を狭め、マトリクス側を広く(比率 2:3)
+    col_chat, col_board = st.columns([2, 3], gap="large")
     with col_chat:
         render_chat()
         render_task_extractor()
