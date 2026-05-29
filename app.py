@@ -206,11 +206,29 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2
 
 /* タスクマトリックス */
 .boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 10px; font-size:1.02rem; }
-.qhead { font-weight:700; font-size:.88rem; padding:8px 12px; border-radius:10px;
-  background:#fff; margin-bottom:6px; }
+.qhead { font-weight:700; font-size:.86rem; padding:6px 10px; border-radius:8px;
+  background:#fff; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+.qcount { background:#f0eefa; color:#5a4ab8; font-size:.7rem; padding:1px 7px;
+  border-radius:10px; font-weight:600; margin-left:auto; }
 div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffcc;
   border-radius:14px; border:1px solid rgba(200,200,230,.35); }
 .stButton button { border-radius:12px; }
+
+/* タスク行（1行コンパクト） */
+.taskrow { font-size:.85rem; line-height:1.45; color:#2c2c2e; padding:1px 0; }
+.taskrow .title { font-weight:500; }
+.taskrow .ttag, .taskrow .dtag, .taskrow .mtag {
+  display:inline-block; padding:1px 6px; border-radius:6px;
+  font-size:.68rem; margin-left:4px; vertical-align:middle; font-weight:600;
+}
+.taskrow .ttag { background:#eef0fa; color:#5a4ab8; }
+.taskrow .dtag { background:#fde4e4; color:#b84f4f; }
+.taskrow .mtag { background:#f5f5f5; color:#888; }
+/* popoverトリガをコンパクトに */
+[data-testid="stPopover"] > div > button {
+  padding:2px 8px !important; font-size:.85rem !important;
+  min-height: 28px !important; line-height:1 !important;
+}
 .stButton button[kind="primary"] {
   background:linear-gradient(135deg,#7a6dd6,#6358c5); border:none; }
 [data-testid="stChatInput"] textarea { font-family:'Noto Sans JP',sans-serif; }
@@ -565,12 +583,21 @@ def render_task(t: dict):
             due = f"〆{d:%m/%d}"
         except ValueError:
             pass
-    c_chk, c_lbl = st.columns([1, 9])
+    c_chk, c_lbl, c_btn = st.columns([1, 12, 2])
     with c_chk:
         checked = st.checkbox(t["title"], key=f"chk_{t['id']}", label_visibility="collapsed")
     with c_lbl:
-        st.markdown(f"{t['title']}　`{time_badge}`{manual_mark}" + (f"　`{due}`" if due else ""))
-        with st.popover("⚙️"):
+        badges = f'<span class="ttag">{time_badge}</span>'
+        if due:
+            badges += f'<span class="dtag">{due}</span>'
+        if manual_mark:
+            badges += f'<span class="mtag">{manual_mark}</span>'
+        st.markdown(
+            f'<div class="taskrow"><span class="title">{t["title"]}</span> {badges}</div>',
+            unsafe_allow_html=True,
+        )
+    with c_btn:
+        with st.popover("⋮", help="詳細・編集・削除"):
             u = st.selectbox("緊急度", list(URGENCY_OPTS),
                              index=0 if lb.get("urgency") == "high" else 1, key=f"u_{t['id']}")
             imp = st.selectbox("重要度", list(IMPORTANCE_OPTS),
@@ -599,12 +626,12 @@ QUAD_SHORT = {
 
 
 def render_quadrant(key: tuple, items: list):
-    """4象限カード1枚分を描画する。"""
+    """4象限カード1枚分を描画する。タスクが多くてもカードは固定高で縦スクロール。"""
     color = QUAD_COLOR[key]
-    with st.container(border=True):
+    with st.container(border=True, height=360):
         st.markdown(
             f'<div class="qhead" style="border-left:5px solid {color}">'
-            f'{QUAD_SHORT[key]}</div>',
+            f'{QUAD_SHORT[key]}  <span class="qcount">{len(items)}</span></div>',
             unsafe_allow_html=True,
         )
         if not items:
