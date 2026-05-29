@@ -68,6 +68,8 @@ if "GEMINI_API_KEY" in st.secrets:
     os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
 if "GEMINI_MODEL" in st.secrets:
     os.environ["GEMINI_MODEL"] = st.secrets["GEMINI_MODEL"]
+if "WORK_EMAIL" in st.secrets:
+    os.environ["WORK_EMAIL"] = st.secrets["WORK_EMAIL"]
 
 
 def _password_gate():

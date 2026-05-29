@@ -32,7 +32,7 @@ JST = dt.timezone(dt.timedelta(hours=9))
 # 2アカウント構成:
 #  main = affection … 予定(Calendar) / ToDo(Tasks) / Zoom文字起こし(Drive)
 #  work = 仕事用    … メール(Gmail)だけ。仕事の連絡が届く先
-WORK_EMAIL = os.environ.get("WORK_EMAIL", "mental.tuning.online@gmail.com")
+WORK_EMAIL = os.environ.get("WORK_EMAIL", "")  # 仕事用Gmailアドレス。secrets/環境変数で指定
 
 ACCOUNTS: dict[str, dict] = {
     "main": {

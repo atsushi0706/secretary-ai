@@ -36,7 +36,7 @@ py -m pip install -r requirements.txt
 - Drive API … 既に有効
 
 ### 4. 仕事用アカウントをテストユーザーに追加
-仕事用メール(`mental.tuning.online@gmail.com`)を読むので、affectionプロジェクトの
+仕事用メール(自分の仕事用Gmailアドレス)を読むので、affectionプロジェクトの
 「OAuth同意画面」→「テストユーザー」に **affection と 仕事用Gmail の両方**を入れる。
 （仕事用が無いと、後半のメール許可で弾かれる）
 
@@ -49,7 +49,7 @@ streamlit run app.py
 | アカウント | 読むもの | ログインで選ぶ |
 |---|---|---|
 | main = affection | 予定 / ToDo / Zoom文字起こし | 普段のaffectionアカウント |
-| work = 仕事用 | メール(仕事の連絡) | mental.tuning.online@gmail.com |
+| work = 仕事用 | メール(仕事の連絡) | 仕事用のGmailアカウント |
 
 - 起動すると **まず main 用のログイン**が開く → affectionを選んで許可
 - 続いて **work 用のログイン**が開く → 仕事用アカウントを選んで許可
