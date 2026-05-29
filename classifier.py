@@ -315,6 +315,17 @@ Be Kiyo Black (Monday mode).
 - 予定が詰まった日は制作系を詰め込みすぎない。空き時間に収まる量だけ。
 - 重要だが急がないことを、毎日少しでも進められるよう促す。
 
+# Zoom履歴の扱い（重要）
+- コンテキストには「直近7日のZoom本文」と「過去30日の履歴一覧（本文なし）」が渡される。
+- 「この時何話したっけ？」「○月○日のZoom何だっけ？」と聞かれたら、
+  本文があれば本文から、本文がなければ履歴一覧の件名・相手・日付から答える。
+- 朝モードで今日のカレンダーにZoom予定がある場合、
+  過去30日履歴から同じ相手の前回ファイルを探し、
+  「前回○○さんとは△△（件名）の話だったね」と能動的に1〜2文で触れる。
+  該当が無ければ無理に触れない。
+- ただしZoom情報の出し方も Kiyo Black モードを維持。冗長な要約は不要、
+  「で、結局これだけ覚えとけ」レベルの短いリマインドでよい。
+
 # 会話のしかた
 - 長い箇条書きの羅列は避け、要点を会話で短く伝える（2〜6文目安）。
 - 「詳しく」「4象限で整理して」と言われたら、構造化して見せる。
@@ -328,7 +339,8 @@ Be Kiyo Black (Monday mode).
 
 def build_context_block(events: list[dict], tasks: list[dict], labels: dict,
                         schedule: dict, transcript: str = "", emails: list[dict] | None = None,
-                        target_label: str = "今日", now: dt.datetime | None = None) -> str:
+                        target_label: str = "今日", now: dt.datetime | None = None,
+                        transcript_metadata: list[dict] | None = None) -> str:
     """秘書に渡す『いまの状況』を1つのテキストにまとめる。"""
     parts = []
     if now is not None:
@@ -359,7 +371,22 @@ def build_context_block(events: list[dict], tasks: list[dict], labels: dict,
     parts.append("未完了タスク:\n" + ("\n".join(task_lines) or "なし"))
 
     if transcript.strip():
-        parts.append("Zoom文字起こし(やるべきことの抽出元):\n" + transcript[:3000])
+        parts.append(
+            "■直近7日間のZoom文字起こし本文（やるべきことの抽出元、"
+            "また『この時何話したっけ』に答える時の根拠）:\n" + transcript[:8000]
+        )
+    if transcript_metadata:
+        meta_lines = []
+        for m in transcript_metadata[:40]:
+            person = m.get("person") or "(相手不明)"
+            topic = m.get("topic_title") or m.get("name", "")
+            mdate = m.get("modified", "")[:10]
+            meta_lines.append(f"- {mdate} / 相手:{person} / 件名:{topic}")
+        parts.append(
+            "■過去30日のZoom履歴一覧（本文は無し。『何月何日に誰とZoomしたか』に答えたり、"
+            "今日のZoom相手の前回履歴を能動的に思い出す時に使う。"
+            "詳しい本文は直近7日分のみコンテキストにある）:\n" + "\n".join(meta_lines)
+        )
     if emails:
         el = [f"- {e.get('subject','')} / {e.get('from','')} / {e.get('snippet','')[:100]}" for e in emails]
         parts.append("仕事メール(やるべきことの抽出元):\n" + "\n".join(el))

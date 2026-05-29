@@ -230,6 +230,15 @@ def load_transcripts(days: int):
         return []
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_transcripts_metadata(days: int):
+    """過去 days 日のZoom文字起こし一覧（本文なし・日付・相手名つき）。"""
+    try:
+        return gc.list_transcripts_metadata(days=days)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def load_work_emails():
     try:
@@ -319,17 +328,21 @@ mode_key = "morning" if is_morning else "evening"
 target_day = today if is_morning else today + dt.timedelta(days=1)
 target_label = "今日" if is_morning else "明日"
 
-recent_transcripts = load_transcripts(days=2)
+recent_transcripts = load_transcripts(days=7)
+transcript_metadata = load_transcripts_metadata(days=30)
 recent_emails = load_work_emails() if gc.is_authed("work") else []
 auto_transcript = "\n\n".join(
-    f"=== {t['name']} ({t['modified'][:10]}) ===\n{t['text']}" for t in recent_transcripts
+    f"=== {t.get('person','')} / {t.get('topic_title', t['name'])} "
+    f"({t['modified'][:10]}) ===\n{t['text']}"
+    for t in recent_transcripts
 )
 now_jst = dt.datetime.now(JST)
 schedule = gc.compute_schedule(events, target_day, work_start=WORK_START_HOUR,
                                work_end=WORK_END_HOUR, now=now_jst)
 context_block = build_context_block(events, tasks, labels, schedule,
                                     transcript=auto_transcript, emails=recent_emails,
-                                    target_label=target_label, now=now_jst)
+                                    target_label=target_label, now=now_jst,
+                                    transcript_metadata=transcript_metadata)
 
 
 # ─────────────────────────────────────────────
@@ -613,10 +626,17 @@ if prompt := st.chat_input("気分・優先したいこと・調整したい時�
 with st.sidebar.expander("📥 秘書が見ている情報源"):
     for e in [e for e in events if (e["start"] or "").startswith(today.isoformat())]:
         st.markdown(f"- {fmt_time(e['start'], e['all_day'])} {e['title']}　_{e.get('calendar','')}_")
-    if recent_transcripts:
-        st.caption("Zoom文字起こし:")
-        for t in recent_transcripts:
-            st.markdown(f"- 📝 {t['name']} ({t['modified'][:10]})")
+    if transcript_metadata:
+        st.caption(f"Zoom履歴 (直近30日 / 本文は直近7日のみ): {len(transcript_metadata)}件")
+        for t in transcript_metadata[:15]:
+            person = t.get("person") or ""
+            topic = t.get("topic_title") or t.get("name", "")
+            mdate = t.get("modified", "")[:10]
+            label = f"📝 {mdate}"
+            if person:
+                label += f" / {person}"
+            label += f" / {topic}"
+            st.markdown(f"- {label}")
     if gc.is_authed("work"):
         st.caption(f"仕事メール {len(recent_emails)}件")
     else:

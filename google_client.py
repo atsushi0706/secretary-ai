@@ -163,11 +163,47 @@ def _gmail_service():
 # ─────────────────────────────────────────────
 # Zoom文字起こし(Drive上の .txt を読む)
 # ─────────────────────────────────────────────
-def get_recent_transcripts(days: int = 2, max_files: int = 5) -> list[dict]:
-    """直近 days 日に更新された文字起こし(.txt / text/plain)を新しい順に返す。
+def _resolve_folder_chain(svc, folder_id: str, cache: dict) -> tuple[str, str]:
+    """親フォルダ名(=日付)とそのまた親フォルダ名(=相手名)を返す。
 
     Zoom→Drive連携が `{相手名}/{日付}/{topic}.txt` で保存する前提。
-    各要素: {name, modified, text}
+    """
+    if not folder_id:
+        return "", ""
+    if folder_id in cache:
+        date_folder = cache[folder_id]
+    else:
+        try:
+            date_folder = svc.files().get(fileId=folder_id,
+                                          fields="id, name, parents").execute()
+        except Exception:  # noqa: BLE001
+            date_folder = {"id": folder_id, "name": "", "parents": []}
+        cache[folder_id] = date_folder
+    date_name = date_folder.get("name", "")
+    person_name = ""
+    parents = date_folder.get("parents") or []
+    if parents:
+        pid = parents[0]
+        if pid in cache:
+            person_folder = cache[pid]
+        else:
+            try:
+                person_folder = svc.files().get(fileId=pid,
+                                                fields="id, name").execute()
+            except Exception:  # noqa: BLE001
+                person_folder = {"id": pid, "name": ""}
+            cache[pid] = person_folder
+        person_name = person_folder.get("name", "")
+    return date_name, person_name
+
+
+def list_transcripts_metadata(days: int = 30, max_files: int = 60) -> list[dict]:
+    """直近 days 日の文字起こしファイルの「ファイル名・日付・相手名」だけ取得。
+
+    本文を読まないので軽量。秘書AIに「過去のZoom履歴一覧」を渡して、
+    『何月何日に誰と話したか』に答えさせる用途。
+
+    各要素: {id, name, modified, date_folder, person, topic_title}
     """
     svc = _drive_service()
     since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat()
@@ -179,12 +215,68 @@ def get_recent_transcripts(days: int = 2, max_files: int = 5) -> list[dict]:
         svc.files()
         .list(
             q=q,
-            fields="files(id, name, modifiedTime)",
+            fields="files(id, name, modifiedTime, parents)",
             orderBy="modifiedTime desc",
             pageSize=max_files,
         )
         .execute()
     )
+
+    folder_cache: dict = {}
+    out: list[dict] = []
+    for f in res.get("files", []):
+        date_folder = ""
+        person = ""
+        parents = f.get("parents") or []
+        if parents:
+            date_folder, person = _resolve_folder_chain(svc, parents[0], folder_cache)
+        topic_title = f["name"]
+        if topic_title.lower().endswith(".txt"):
+            topic_title = topic_title[:-4]
+        out.append({
+            "id": f["id"],
+            "name": f["name"],
+            "modified": f.get("modifiedTime", ""),
+            "date_folder": date_folder,
+            "person": person,
+            "topic_title": topic_title,
+        })
+    return out
+
+
+def get_transcript_text(file_id: str) -> str:
+    """指定IDの文字起こしファイルの本文を取得する。"""
+    svc = _drive_service()
+    try:
+        data = svc.files().get_media(fileId=file_id).execute()
+        return data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def get_recent_transcripts(days: int = 7, max_files: int = 10) -> list[dict]:
+    """直近 days 日に更新された文字起こし(.txt / text/plain)を新しい順に返す。
+
+    Zoom→Drive連携が `{相手名}/{日付}/{topic}.txt` で保存する前提。
+    各要素: {name, modified, text, date_folder, person, topic_title}
+    """
+    svc = _drive_service()
+    since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).isoformat()
+    q = (
+        "mimeType = 'text/plain' and trashed = false "
+        f"and modifiedTime > '{since}'"
+    )
+    res = (
+        svc.files()
+        .list(
+            q=q,
+            fields="files(id, name, modifiedTime, parents)",
+            orderBy="modifiedTime desc",
+            pageSize=max_files,
+        )
+        .execute()
+    )
+    folder_cache: dict = {}
     out: list[dict] = []
     for f in res.get("files", []):
         try:
@@ -192,7 +284,23 @@ def get_recent_transcripts(days: int = 2, max_files: int = 5) -> list[dict]:
             text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data)
         except Exception:  # noqa: BLE001
             text = ""
-        out.append({"name": f["name"], "modified": f.get("modifiedTime", ""), "text": text})
+        date_folder = ""
+        person = ""
+        parents = f.get("parents") or []
+        if parents:
+            date_folder, person = _resolve_folder_chain(svc, parents[0], folder_cache)
+        topic_title = f["name"]
+        if topic_title.lower().endswith(".txt"):
+            topic_title = topic_title[:-4]
+        out.append({
+            "id": f["id"],
+            "name": f["name"],
+            "modified": f.get("modifiedTime", ""),
+            "text": text,
+            "date_folder": date_folder,
+            "person": person,
+            "topic_title": topic_title,
+        })
     return out
 
 
