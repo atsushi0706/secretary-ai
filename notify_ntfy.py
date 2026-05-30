@@ -36,6 +36,8 @@ except Exception:  # noqa: BLE001
 
 JST = dt.timezone(dt.timedelta(hours=9))
 DEFAULT_SERVER = "https://ntfy.sh"
+# 通知タップ時に開くデフォルトURL（Cloud Secretsに NTFY_CLICK_URL が無くてもこれが使われる）
+DEFAULT_CLICK_URL = "https://appary-ai-rvfpzmkv3ntaijpgylvd7f.streamlit.app/"
 
 
 def _secret(name: str, default: str = "") -> str:
@@ -71,7 +73,7 @@ def send(title: str, body: str, *, click: str | None = None,
         raise RuntimeError("NTFY_TOPIC が未設定です。.streamlit/secrets.toml に追加してください。")
     server = _secret("NTFY_SERVER", DEFAULT_SERVER).rstrip("/")
     if not click:
-        click = _secret("NTFY_CLICK_URL", "") or None
+        click = _secret("NTFY_CLICK_URL", "") or DEFAULT_CLICK_URL
 
     # 本文にまだURLが含まれていなければ末尾に追加する
     if click and click not in body:
@@ -171,12 +173,9 @@ def build_briefing_short(mode: Literal["morning", "evening"],
         "",
     ]
     # 本文末尾にURLをテキストで含める（iOSでもタップで開けるように）
-    click_url = _secret("NTFY_CLICK_URL", "")
-    if click_url:
-        body_lines.append("👇 詳しい時間割を見る")
-        body_lines.append(click_url)
-    else:
-        body_lines.append("詳しい時間割は秘書AIで見られます。")
+    click_url = _secret("NTFY_CLICK_URL", "") or DEFAULT_CLICK_URL
+    body_lines.append("👇 詳しい時間割を見る")
+    body_lines.append(click_url)
     return title, "\n".join(body_lines)
 
 

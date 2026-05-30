@@ -96,37 +96,9 @@ def _cookie_manager():
 
 
 def _password_gate():
-    """secrets に APP_PASSWORD があれば、入力が一致するまで画面を出さない。
-    一度入室すれば cookie に記録され、90日間は再入力不要(同じブラウザ限定)。
-    ローカル運用(APP_PASSWORD未設定)では素通りする。
-    """
-    pw = st.secrets.get("APP_PASSWORD", "") if hasattr(st, "secrets") else ""
-    if not pw:
-        return
-    if st.session_state.get("authed"):
-        return
-
-    expected = _auth_token(pw)
-    cm = _cookie_manager()
-    if cm is not None:
-        stored = cm.get(_AUTH_COOKIE)
-        if stored == expected:
-            st.session_state["authed"] = True
-            return
-
-    st.markdown("### 🔒 秘書AIにログイン")
-    st.caption("一度入室すれば、このブラウザでは次回から自動でログインされます。")
-    entered = st.text_input("合言葉", type="password")
-    if st.button("入室", type="primary"):
-        if entered == pw:
-            st.session_state["authed"] = True
-            if cm is not None:
-                cm.set(_AUTH_COOKIE, expected,
-                       expires_at=dt.datetime.now() + dt.timedelta(days=90))
-            st.rerun()
-        else:
-            st.error("合言葉が違います。")
-    st.stop()
+    """合言葉ゲートは撤廃。URLが推測不可能な前提でフリーアクセス。
+    APP_PASSWORD は secrets に残ってても無視する。"""
+    return
 
 
 _password_gate()
