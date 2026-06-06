@@ -388,10 +388,6 @@ if st.sidebar.button("🔄 予定とタスクを最新に"):
     st.session_state.pop("chat_key", None)
     st.rerun()
 
-# 月間カレンダー（サイドバー常時表示）
-with st.sidebar:
-    render_month_calendar()
-
 with st.sidebar.expander("📲 スマホ通知（ntfy）"):
     if st.button("いまのブリーフィングを送る"):
         try:
@@ -1016,6 +1012,11 @@ def render_month_calendar():
         f'<div class="month-cal"><div class="grid">{"".join(cells_html)}</div></div>',
         unsafe_allow_html=True,
     )
+
+
+# 月間カレンダー（関数定義後にサイドバーへ常時表示）
+with st.sidebar:
+    render_month_calendar()
 
 
 if focus:
