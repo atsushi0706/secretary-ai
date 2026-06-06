@@ -56,22 +56,31 @@ ACCOUNTS: dict[str, dict] = {
 # 認証(アカウント別にトークンを持つ)
 # ─────────────────────────────────────────────
 def _restore_token_from_secrets(account: str) -> bool:
-    """Streamlit Cloud 等で token ファイルが無い場合に st.secrets から復元する。
+    """token ファイルが無い場合、Streamlit secrets または環境変数から復元する。
 
-    secrets.toml に次の形で書いておく:
-      [google_tokens]
-      main = '''{"token":"...","refresh_token":"..."}'''
-      work = '''{"token":"...","refresh_token":"..."}'''
+    優先順位:
+      1) 環境変数 TOKEN_MAIN_JSON / TOKEN_WORK_JSON（Render等で使用）
+      2) Streamlit secrets の [google_tokens] セクション（Streamlit Cloud用）
     """
-    if not _HAS_ST:
-        return False
-    try:
-        section = _st.secrets.get("google_tokens", {})
-        payload = section.get(account)
-    except Exception:  # noqa: BLE001
-        return False
+    payload = None
+
+    # 1) 環境変数（Render等）
+    env_key = f"TOKEN_{account.upper()}_JSON"
+    env_val = os.environ.get(env_key, "").strip()
+    if env_val:
+        payload = env_val
+
+    # 2) Streamlit secrets
+    if not payload and _HAS_ST:
+        try:
+            section = _st.secrets.get("google_tokens", {})
+            payload = section.get(account)
+        except Exception:  # noqa: BLE001
+            payload = None
+
     if not payload:
         return False
+
     token_file: Path = ACCOUNTS[account]["token"]
     token_file.parent.mkdir(parents=True, exist_ok=True)
     if isinstance(payload, dict):
