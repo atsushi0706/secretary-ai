@@ -37,7 +37,7 @@ except Exception:  # noqa: BLE001
 JST = dt.timezone(dt.timedelta(hours=9))
 DEFAULT_SERVER = "https://ntfy.sh"
 # 通知タップ時に開くデフォルトURL（Cloud Secretsに NTFY_CLICK_URL が無くてもこれが使われる）
-DEFAULT_CLICK_URL = "https://appary-ai-rvfpzmkv3ntaijpgylvd7f.streamlit.app/"
+DEFAULT_CLICK_URL = "https://secretary-ai-4rc3.onrender.com/"
 
 
 def _secret(name: str, default: str = "") -> str:
