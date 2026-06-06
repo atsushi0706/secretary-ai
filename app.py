@@ -48,7 +48,10 @@ def _notify_endpoint():
     mode_q = qp.get("notify")
     if not mode_q:
         return
-    expected_key = st.secrets.get("NOTIFY_KEY", "") if hasattr(st, "secrets") else ""
+    try:
+        expected_key = st.secrets.get("NOTIFY_KEY", "")
+    except Exception:  # noqa: BLE001
+        expected_key = os.environ.get("NOTIFY_KEY", "")
     if expected_key and qp.get("key") != expected_key:
         st.write("403"); st.stop()
     if mode_q not in ("morning", "evening", "ping"):
@@ -71,12 +74,21 @@ _notify_endpoint()
 
 st.set_page_config(page_title=f"秘書AI {SECRETARY_NAME}", page_icon="🗒️", layout="wide")
 
-if "GEMINI_API_KEY" in st.secrets:
-    os.environ["GEMINI_API_KEY"] = st.secrets["GEMINI_API_KEY"]
-if "GEMINI_MODEL" in st.secrets:
-    os.environ["GEMINI_MODEL"] = st.secrets["GEMINI_MODEL"]
-if "WORK_EMAIL" in st.secrets:
-    os.environ["WORK_EMAIL"] = st.secrets["WORK_EMAIL"]
+def _try_secret(key: str, default: str = "") -> str:
+    """secrets.toml が無い環境(Render等)でも安全にsecretを取る。"""
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:  # noqa: BLE001
+        pass
+    return default
+
+
+# secrets.toml に値があれば環境変数にコピー（Render環境では既に環境変数経由）
+for _k in ("GEMINI_API_KEY", "GEMINI_MODEL", "WORK_EMAIL"):
+    _v = _try_secret(_k)
+    if _v and not os.environ.get(_k):
+        os.environ[_k] = _v
 
 
 _AUTH_COOKIE = "secretary_authed"
