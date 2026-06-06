@@ -314,36 +314,6 @@ if st.sidebar.button("🔄 予定とタスクを最新に"):
     st.session_state.pop("chat_key", None)
     st.rerun()
 
-with st.sidebar.expander("📎 スクショからタスク抽出"):
-    st.caption("メールやメッセージのスクショをアップすると、Geminiが文字を読んでタスクを作ります。")
-    _img = st.file_uploader(
-        "画像をアップロード", type=["png", "jpg", "jpeg", "webp"],
-        label_visibility="collapsed", key="img_upload",
-    )
-    _img_hint = st.text_input(
-        "補足ヒント（任意）", key="img_hint",
-        placeholder="例：返信は明日まで",
-    )
-    if _img is not None:
-        st.image(_img, caption=_img.name, width="stretch")
-        if st.button("📸 画像からタスクを読み取る", type="primary", use_container_width=True):
-            try:
-                with st.spinner("画像を解析中…"):
-                    cands = extract_tasks_from_image(
-                        _img.getvalue(),
-                        _img.type or "image/png",
-                        target_label=target_label,
-                        target_date_iso=target_day.isoformat(),
-                        extra_hint=_img_hint or "",
-                    )
-                if cands:
-                    st.session_state["task_candidates"] = cands
-                    st.success(f"{len(cands)}件抽出。下のタスク候補で確認・編集→Googleタスクに追加してください。")
-                else:
-                    st.info("画像からタスクは見つかりませんでした。")
-            except Exception as e:  # noqa: BLE001
-                st.error(f"画像解析エラー: {e}")
-
 with st.sidebar.expander("📲 スマホ通知（ntfy）"):
     if st.button("いまのブリーフィングを送る"):
         try:
@@ -782,19 +752,60 @@ else:
         render_today_advice()
 
 
-# 入力（音声入力もここから）
-if prompt := st.chat_input("気分・優先したいこと・調整したい時間帯など…（音声入力でもOK）"):
-    st.session_state["messages"].append({"role": "user", "content": prompt})
-    storage.save_message(today.isoformat(), mode_key, "user", prompt)
-    try:
-        with st.spinner("考えています…"):
-            reply = secretary_chat(st.session_state["messages"], context_block)
-        st.session_state["messages"].append({"role": "assistant", "content": reply})
-        storage.save_message(today.isoformat(), mode_key, "assistant", reply)
-    except Exception as e:  # noqa: BLE001
-        err_msg = "（" + _friendly_error(e) + "）"
-        st.session_state["messages"].append({"role": "assistant", "content": err_msg})
-        storage.save_message(today.isoformat(), mode_key, "assistant", err_msg)
+# 入力（テキスト・音声・画像添付すべて1つの入力欄から）
+_chat_value = st.chat_input(
+    "気分・優先したいこと・画像（メールスクショ等）の添付もOK",
+    accept_file="multiple",
+    file_type=["png", "jpg", "jpeg", "webp"],
+)
+if _chat_value:
+    _text = (getattr(_chat_value, "text", None) or "").strip()
+    _files = list(getattr(_chat_value, "files", None) or [])
+
+    # 画像が添付されていれば、画像→タスク抽出に流す
+    if _files:
+        try:
+            with st.spinner(f"画像{len(_files)}枚から読み取り中…"):
+                all_cands = []
+                for f in _files:
+                    cands = extract_tasks_from_image(
+                        f.getvalue(),
+                        f.type or "image/png",
+                        target_label=target_label,
+                        target_date_iso=target_day.isoformat(),
+                        extra_hint=_text,  # チャット欄のテキストはヒントとして使う
+                    )
+                    all_cands.extend(cands)
+            # ユーザー発言として会話履歴にも残す
+            user_msg = f"📎 画像{len(_files)}枚を共有"
+            if _text:
+                user_msg += f"（補足: {_text}）"
+            st.session_state["messages"].append({"role": "user", "content": user_msg})
+            storage.save_message(today.isoformat(), mode_key, "user", user_msg)
+            if all_cands:
+                st.session_state["task_candidates"] = all_cands
+                reply = f"画像から{len(all_cands)}件のタスク候補を抜き出した。下のリストで確認・編集して、Googleタスクに追加してね。"
+            else:
+                reply = "画像見たけど、新しく追加すべきタスクは見つからなかったよ。"
+            st.session_state["messages"].append({"role": "assistant", "content": reply})
+            storage.save_message(today.isoformat(), mode_key, "assistant", reply)
+        except Exception as e:  # noqa: BLE001
+            err_msg = "（画像解析エラー: " + str(e)[:120] + "）"
+            st.session_state["messages"].append({"role": "assistant", "content": err_msg})
+            storage.save_message(today.isoformat(), mode_key, "assistant", err_msg)
+    elif _text:
+        # テキストのみ → 従来の会話処理
+        st.session_state["messages"].append({"role": "user", "content": _text})
+        storage.save_message(today.isoformat(), mode_key, "user", _text)
+        try:
+            with st.spinner("考えています…"):
+                reply = secretary_chat(st.session_state["messages"], context_block)
+            st.session_state["messages"].append({"role": "assistant", "content": reply})
+            storage.save_message(today.isoformat(), mode_key, "assistant", reply)
+        except Exception as e:  # noqa: BLE001
+            err_msg = "（" + _friendly_error(e) + "）"
+            st.session_state["messages"].append({"role": "assistant", "content": err_msg})
+            storage.save_message(today.isoformat(), mode_key, "assistant", err_msg)
     st.rerun()
 
 
