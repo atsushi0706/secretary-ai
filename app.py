@@ -229,7 +229,48 @@ div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffe6;
 .stButton button[kind="primary"] {
   background:linear-gradient(135deg,#7a6dd6,#6358c5); border:none; }
 [data-testid="stChatInput"] textarea { font-family:'Noto Sans JP',sans-serif; }
-[data-testid="stChatInput"] { border-radius:18px; }
+[data-testid="stChatInput"] { border-radius:18px; padding:4px 6px;
+  border:2px solid #d8d4ee; background:#fff;
+  box-shadow:0 4px 16px rgba(80,80,130,.08); }
+/* 添付ボタンを大きく目立たせる */
+[data-testid="stChatInputFileSubmit"],
+button[data-testid="stChatInputFileButton"] {
+  min-width: 44px !important; min-height: 44px !important;
+  background: #ede8f9 !important; border: none !important;
+  border-radius: 12px !important; color: #5a4ab8 !important;
+  margin: 4px !important;
+}
+[data-testid="stChatInputFileSubmit"]:hover,
+button[data-testid="stChatInputFileButton"]:hover {
+  background: #d8cef0 !important;
+}
+/* 添付ファイルのプレビューを大きく見せる */
+[data-testid="stChatInputFileTile"] {
+  background:#f7f5ff !important; border:1px solid #d8cef0 !important;
+  border-radius:10px !important; padding:6px 10px !important;
+}
+
+/* 月間カレンダー */
+.month-cal { background:#fff; border-radius:16px; padding:14px 16px;
+  border:1px solid rgba(200,200,230,.4); margin-bottom:14px;
+  box-shadow:0 4px 16px rgba(80,80,130,.05); }
+.month-cal .head { display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:10px; }
+.month-cal .head h3 { margin:0; font-size:.98rem; color:#3a3a3e; font-weight:700; }
+.month-cal .grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; }
+.month-cal .dow { font-size:.72rem; color:#8a8a90; text-align:center; padding:4px 0;
+  font-weight:600; }
+.month-cal .dow.sat { color:#5b88c2; } .month-cal .dow.sun { color:#c25b5b; }
+.month-cal .cell { min-height:62px; padding:4px 6px; border-radius:8px;
+  background:#fafafd; font-size:.7rem; line-height:1.3; overflow:hidden;
+  border:1px solid rgba(200,200,230,.3); }
+.month-cal .cell.today { background:#f0eefa; border-color:#7a6dd6;
+  box-shadow:inset 0 0 0 1px #7a6dd6; }
+.month-cal .cell.other { opacity:.35; }
+.month-cal .cell .dnum { font-weight:700; color:#3a3a3e; font-size:.78rem; }
+.month-cal .cell.today .dnum { color:#5a4ab8; }
+.month-cal .cell .ev { display:block; margin-top:2px; color:#5a4ab8;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 /* サイドバー */
 [data-testid="stSidebar"] { background:#ffffff; border-right:1px solid rgba(200,200,230,.4); }
@@ -307,7 +348,28 @@ def _friendly_error(e: Exception) -> str:
 if AVATAR.exists():
     st.sidebar.image(str(AVATAR), use_container_width=True)
 st.sidebar.title(f"秘書 {SECRETARY_NAME}")
-mode = st.sidebar.radio("いつの相談？", ["🌅 朝（今日の組み立て）", "🌙 夜（明日の準備）"], index=0)
+
+# 時刻で自動判別: 15時より前は morning(今日の組み立て)、それ以降は evening(明日の準備)
+# 手動切替したい時のために override も用意
+_now_hour = dt.datetime.now(JST).hour
+_auto_mode = "morning" if _now_hour < 15 else "evening"
+_override = st.sidebar.selectbox(
+    "モード",
+    options=["🤖 自動", "🌅 朝（今日の組み立て）", "🌙 夜（明日の準備）"],
+    index=0,
+    help="通常は時刻で自動切替（15時以降は明日の準備モード）。手動で固定もできる",
+)
+if _override.startswith("🤖"):
+    is_morning = _auto_mode == "morning"
+elif _override.startswith("🌅"):
+    is_morning = True
+else:
+    is_morning = False
+mode = "🌅 朝" if is_morning else "🌙 夜"
+st.sidebar.caption(
+    f"いまのモード: {'🌅 今日の組み立て' if is_morning else '🌙 明日の準備'}"
+    + (f"（自動・現在{_now_hour}時）" if _override.startswith('🤖') else "（手動固定）")
+)
 focus = st.sidebar.toggle("🗨️ 集中モード（会話だけ）", value=False)
 if st.sidebar.button("🔄 予定とタスクを最新に"):
     refresh()
@@ -372,7 +434,7 @@ with st.spinner("状況を確認中..."):
     labels = classify_tasks(tasks)
 
 today = dt.date.today()
-is_morning = mode.startswith("🌅")
+# is_morning はサイドバーの自動判別で既に決定済み
 mode_key = "morning" if is_morning else "evening"
 target_day = today if is_morning else today + dt.timedelta(days=1)
 target_label = "今日" if is_morning else "明日"
@@ -707,9 +769,28 @@ def render_board():
 # ─────────────────────────────────────────────
 # レイアウト：左=会話 / 右=4象限ボード（集中モードなら会話のみ）
 # ─────────────────────────────────────────────
+@st.cache_data(ttl=1800, show_spinner=False)
+def _dynamic_advice(signature: str, hint: str) -> str:
+    """Gemini で『今日のアドバイス』を1〜2文で生成。signature でキャッシュ。"""
+    try:
+        from classifier import _generate as _g, SECRETARY_PERSONA
+        prompt = (
+            "あなたは「清瀬リンク」。下記の現在の状況を見て、ユーザー(淳くん)に届ける"
+            "『今日のアドバイス』を1〜2文（50字以内）で書いてください。"
+            "ルール: マウントしない、責めない、キラキラしない、淡々と。具体的な助言1つに絞る。\n\n"
+            f"【現在の状況】\n{hint}"
+        )
+        resp = _g(prompt, {"temperature": 0.6})
+        text = (resp.text or "").strip()
+        # 改行や前置きを削除
+        text = text.split("\n", 1)[0]
+        return text[:140] or "今日もマイペースでいこう。"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def render_today_advice():
-    """ルールベースの『今日のアドバイス』。Kiyo Blackらしく短くドライに。"""
-    parts = []
+    """『今日のアドバイス』。Gemini動的生成 + ルールベースフォールバック。"""
     busy_min = schedule.get("busy_minutes", 0)
     free_min = schedule.get("free_minutes", 0)
     high_high = sum(
@@ -717,23 +798,138 @@ def render_today_advice():
         if labels.get(t["id"], {}).get("urgency") == "high"
         and labels.get(t["id"], {}).get("importance") == "high"
     )
-    if busy_min > 240:
-        parts.append("今日は予定詰めめ。制作系は最小着手で。")
-    if high_high >= 3:
-        parts.append(f"緊急×重要が{high_high}件。まずそこから片付ける。")
-    if free_min and free_min < 60:
-        parts.append("空き時間が少ない。スキマ時間で軽いやつをまとめて処理。")
-    if not parts:
-        if high_high == 0:
-            parts.append("今日は緊急タスクなし。重要だが急がないやつ進めるチャンスだよ。")
-        else:
+    other_tasks = max(0, len(tasks) - high_high)
+    hint = (
+        f"時刻: {now_jst:%H:%M} / モード: {target_label} / "
+        f"予定混雑: {busy_min}分 / 空き: {free_min}分 / "
+        f"緊急重要タスク: {high_high}件 / その他タスク: {other_tasks}件"
+    )
+    # 30分キャッシュ。signature が同じなら再生成しない
+    sig = f"{today.isoformat()}|{is_morning}|{busy_min}|{free_min}|{high_high}|{other_tasks}"
+    advice_text = _dynamic_advice(sig, hint)
+    if not advice_text:
+        # フォールバック: ルールベース
+        parts = []
+        if busy_min > 240:
+            parts.append("今日は予定詰めめ。制作系は最小着手で。")
+        if high_high >= 3:
+            parts.append(f"緊急×重要が{high_high}件。まずそこから片付けよう。")
+        if free_min and free_min < 60:
+            parts.append("空き時間が少ない。スキマ時間で軽いやつをまとめて処理。")
+        if not parts:
             parts.append("時間は十分。優先度通りに淡々と進めればいい。")
-    advice_text = " / ".join(parts)
+        advice_text = " / ".join(parts)
     st.markdown(
         f'<div class="advice">'
         f'<div class="ttl">✨ 今日のアドバイス</div>'
         f'<div class="body">{advice_text}</div>'
         f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+@st.cache_data(ttl=180, show_spinner=False)
+def _month_events_cached(year: int, month: int):
+    """指定月の events を Google Calendar から取得（35日分、月の表示に十分）。"""
+    try:
+        return gc.get_events(days_ahead=42)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def render_month_calendar():
+    """月間カレンダー(1ヶ月分)。前/次月の切替もできる。"""
+    if "cal_offset" not in st.session_state:
+        st.session_state["cal_offset"] = 0
+    offset = st.session_state["cal_offset"]
+    # 表示月
+    base = today.replace(day=1)
+    year = base.year
+    month = base.month + offset
+    while month > 12:
+        month -= 12; year += 1
+    while month < 1:
+        month += 12; year -= 1
+    first = dt.date(year, month, 1)
+    # 月末
+    if month == 12:
+        last = dt.date(year + 1, 1, 1) - dt.timedelta(days=1)
+    else:
+        last = dt.date(year, month + 1, 1) - dt.timedelta(days=1)
+
+    # ヘッダー（月名 + 前後ボタン）
+    h_prev, h_title, h_next = st.columns([1, 4, 1])
+    with h_prev:
+        if st.button("◀", key="cal_prev", help="前月", use_container_width=True):
+            st.session_state["cal_offset"] = offset - 1
+            st.rerun()
+    with h_title:
+        st.markdown(
+            f'<div style="text-align:center;font-weight:700;padding:6px 0;">'
+            f'📅 {year}年 {month}月</div>',
+            unsafe_allow_html=True,
+        )
+    with h_next:
+        if st.button("▶", key="cal_next", help="翌月", use_container_width=True):
+            st.session_state["cal_offset"] = offset + 1
+            st.rerun()
+
+    # イベント取得（現在月含む 42日先まで取れているので、表示月分を抽出）
+    all_events = _month_events_cached(year, month)
+    from collections import defaultdict
+    day_events: dict[str, list[str]] = defaultdict(list)
+    for e in all_events:
+        start = e.get("start", "") or ""
+        if not start:
+            continue
+        dkey = start[:10]
+        if e.get("all_day"):
+            label = e["title"]
+        else:
+            try:
+                t = dt.datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(JST)
+                label = f"{t:%H:%M} {e['title']}"
+            except (ValueError, AttributeError):
+                label = e["title"]
+        day_events[dkey].append(label)
+
+    # グリッド描画
+    weekday_first = (first.weekday() + 0) % 7  # 月=0
+    # 月-日 順を 日-土に変更したい場合は調整。ここでは日始まり
+    weekday_first_sun = (first.weekday() + 1) % 7
+    total_days = last.day
+    # 6週分のセル
+    cells_html = []
+    # 曜日ヘッダー
+    dow_names = ["日", "月", "火", "水", "木", "金", "土"]
+    for i, n in enumerate(dow_names):
+        cls = "dow" + (" sun" if i == 0 else (" sat" if i == 6 else ""))
+        cells_html.append(f'<div class="{cls}">{n}</div>')
+    # 前月の空白セル
+    for _ in range(weekday_first_sun):
+        cells_html.append('<div class="cell other"></div>')
+    # 当月セル
+    for d in range(1, total_days + 1):
+        cur = dt.date(year, month, d)
+        dkey = cur.isoformat()
+        is_today = cur == today
+        ev_list = day_events.get(dkey, [])
+        ev_html = ""
+        for ev in ev_list[:3]:
+            safe = (ev or "").replace("<", "&lt;").replace(">", "&gt;")
+            ev_html += f'<span class="ev">{safe}</span>'
+        if len(ev_list) > 3:
+            ev_html += f'<span class="ev">+{len(ev_list)-3}件</span>'
+        cls = "cell" + (" today" if is_today else "")
+        cells_html.append(
+            f'<div class="{cls}"><span class="dnum">{d}</span>{ev_html}</div>'
+        )
+    # 残り(末尾)
+    while len(cells_html) % 7 != 0:
+        cells_html.append('<div class="cell other"></div>')
+
+    st.markdown(
+        f'<div class="month-cal"><div class="grid">{"".join(cells_html)}</div></div>',
         unsafe_allow_html=True,
     )
 
@@ -750,6 +946,9 @@ else:
     with col_board:
         render_board()
         render_today_advice()
+        # 月間カレンダー（来週・来月の予定も確認できる）
+        with st.expander("📅 月間カレンダー", expanded=False):
+            render_month_calendar()
 
 
 # 入力（テキスト・音声・画像添付すべて1つの入力欄から）
