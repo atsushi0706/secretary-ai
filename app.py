@@ -272,9 +272,17 @@ button[data-testid="stChatInputFileButton"]:hover {
 .month-cal .cell .ev { display:block; margin-top:2px; color:#5a4ab8;
   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
-/* サイドバー */
-[data-testid="stSidebar"] { background:#ffffff; border-right:1px solid rgba(200,200,230,.4); }
+/* サイドバー（カレンダー収容のため少し広め） */
+[data-testid="stSidebar"] { background:#ffffff; border-right:1px solid rgba(200,200,230,.4);
+  width: 380px !important; min-width:380px !important; }
+[data-testid="stSidebar"] > div:first-child { width: 380px !important; }
 [data-testid="stSidebar"] .stMarkdown h2 { font-size:1.05rem; color:#3a3a3e; }
+[data-testid="stSidebar"] .month-cal { padding:8px 6px; }
+[data-testid="stSidebar"] .month-cal .cell { min-height:34px; padding:2px 3px; font-size:.6rem; }
+[data-testid="stSidebar"] .month-cal .cell .dnum { font-size:.7rem; }
+[data-testid="stSidebar"] .month-cal .cell .ev { font-size:.55rem; }
+[data-testid="stSidebar"] .month-cal .grid { gap:2px; }
+[data-testid="stSidebar"] .month-cal .dow { font-size:.62rem; padding:2px 0; }
 
 /* 今日のアドバイス枠 */
 .advice { background:#f6f3ff; border-radius:14px; padding:14px 18px;
@@ -293,12 +301,12 @@ inject_css()
 # ─────────────────────────────────────────────
 # データ取得
 # ─────────────────────────────────────────────
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def load_data():
     return gc.get_events(days_ahead=1), gc.get_tasks(include_completed=False)
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_transcripts(days: int):
     try:
         return gc.get_recent_transcripts(days=days)
@@ -306,7 +314,7 @@ def load_transcripts(days: int):
         return []
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_transcripts_metadata(days: int):
     """過去 days 日のZoom文字起こし一覧（本文なし・日付・相手名つき）。"""
     try:
@@ -315,7 +323,7 @@ def load_transcripts_metadata(days: int):
         return []
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def load_work_emails():
     try:
         return gc.get_work_emails()
@@ -375,6 +383,10 @@ if st.sidebar.button("🔄 予定とタスクを最新に"):
     refresh()
     st.session_state.pop("chat_key", None)
     st.rerun()
+
+# 月間カレンダー（サイドバー常時表示）
+with st.sidebar:
+    render_month_calendar()
 
 with st.sidebar.expander("📲 スマホ通知（ntfy）"):
     if st.button("いまのブリーフィングを送る"):
@@ -702,10 +714,10 @@ def render_task(t: dict):
 
 
 QUAD_SHORT = {
-    ("high", "high"): "🔴",
-    ("low", "high"): "🟡",
-    ("high", "low"): "🔵",
-    ("low", "low"): "⚪",
+    ("high", "high"): "🔴 緊急度：高 × 重要度：高",
+    ("low", "high"): "🟡 緊急度：低 × 重要度：高",
+    ("high", "low"): "🔵 緊急度：高 × 重要度：低",
+    ("low", "low"): "⚪ 緊急度：低 × 重要度：低",
 }
 
 
@@ -855,7 +867,7 @@ def render_today_advice():
     )
 
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=1800, show_spinner=False)
 def _month_events_cached(year: int, month: int):
     """指定月の events を Google Calendar から取得（35日分、月の表示に十分）。"""
     try:
@@ -981,9 +993,6 @@ else:
         render_chat()
     # 4) タスク抽出（会話から）
     render_task_extractor()
-    # 5) 月間カレンダー（折りたたみ）
-    with st.expander("📅 月間カレンダー", expanded=False):
-        render_month_calendar()
 
 
 # 入力（テキスト・音声・画像添付すべて1つの入力欄から）
@@ -1028,12 +1037,67 @@ if _chat_value:
             st.session_state["messages"].append({"role": "assistant", "content": err_msg})
             storage.save_message(today.isoformat(), mode_key, "assistant", err_msg)
     elif _text:
-        # テキストのみ → 従来の会話処理
+        # テキストのみ → 従来の会話処理 + 「入れといて」検出で自動タスク追加
         st.session_state["messages"].append({"role": "user", "content": _text})
         storage.save_message(today.isoformat(), mode_key, "user", _text)
+
+        # 「入れといて」「追加しといて」系のフレーズを検出
+        add_intent_keywords = (
+            "入れといて", "入れておいて", "入れとい", "追加しといて", "追加しておいて",
+            "追加しとい", "タスクに入れて", "タスクに追加", "todoに", "ToDoに",
+            "やることに入れて", "リストに入れて", "リストに追加",
+            "登録しといて", "登録しておいて",
+        )
+        intent_add = any(k in _text for k in add_intent_keywords)
+
+        added_summary = ""
+        if intent_add:
+            try:
+                with st.spinner("タスクとして登録しています…"):
+                    cands = extract_tasks_from_conversation(
+                        st.session_state["messages"],
+                        context_block,
+                        target_label=target_label,
+                        target_date_iso=target_day.isoformat(),
+                        mode=mode_key,
+                        existing_task_titles=[t.get("title", "") for t in tasks],
+                    )
+                if cands:
+                    added_titles = []
+                    for c in cands:
+                        try:
+                            created = gc.add_task(
+                                c["title"], notes=c.get("notes", ""), due=c.get("due"),
+                            )
+                            set_manual_label(
+                                created["id"], c["urgency"], c["importance"], c["time"],
+                            )
+                            storage.save_extracted_task(
+                                date=target_day.isoformat(), mode=mode_key,
+                                source="auto_intent", title=c["title"],
+                                notes=c.get("notes", ""), due=c.get("due"),
+                                urgency=c["urgency"], importance=c["importance"],
+                                time_label=c["time"],
+                                google_task_id=created["id"], status="pushed",
+                            )
+                            added_titles.append(c["title"])
+                        except Exception:  # noqa: BLE001
+                            pass
+                    if added_titles:
+                        added_summary = (
+                            "\n\n[システム注記] 以下のタスクを自動でGoogleタスクに追加済み: "
+                            + " / ".join(f"「{t}」" for t in added_titles)
+                            + "。返答ではこの追加を自然に確認だけ伝えて。"
+                        )
+                        refresh()
+            except Exception:  # noqa: BLE001
+                pass
+
         try:
             with st.spinner("考えています…"):
-                reply = secretary_chat(st.session_state["messages"], context_block)
+                # 自動追加した場合はその情報を秘書に渡して、返答に反映してもらう
+                augmented = context_block + added_summary
+                reply = secretary_chat(st.session_state["messages"], augmented)
             st.session_state["messages"].append({"role": "assistant", "content": reply})
             storage.save_message(today.isoformat(), mode_key, "assistant", reply)
         except Exception as e:  # noqa: BLE001
