@@ -31,6 +31,7 @@ from classifier import (
     classify_tasks,
     clear_manual_label,
     extract_tasks_from_conversation,
+    extract_tasks_from_image,
     secretary_chat,
     set_manual_label,
 )
@@ -159,13 +160,18 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2
 
 /* ヘッダーカード */
 .hero { display:flex; align-items:center; gap:18px; background:#ffffff;
-  border-radius:22px; padding:18px 24px; box-shadow:0 8px 26px rgba(80,80,130,.07);
-  margin-bottom:18px; border:1px solid rgba(200,200,230,.4); }
-.hero img { width:62px; height:62px; border-radius:50%; object-fit:cover;
-  border:2px solid #eee5f5; }
-.hero .nm { font-weight:700; font-size:1.18rem; color:#2c2c2e; }
-.hero .sub { font-size:.82rem; color:#8a8a90; margin-top:2px; }
-.hero .dot { color:#3fb27f; font-size:.7rem; }
+  border-radius:24px; padding:20px 28px; box-shadow:0 10px 32px rgba(80,80,130,.10);
+  margin-bottom:20px; border:1px solid rgba(200,200,230,.45);
+  background:linear-gradient(135deg, #ffffff 0%, #faf8ff 100%); }
+.hero img { width:68px; height:68px; border-radius:50%; object-fit:cover;
+  border:3px solid #eee5f5; box-shadow:0 4px 12px rgba(122,109,214,.18); }
+.hero .nm { font-weight:700; font-size:1.22rem; color:#2c2c2e;
+  letter-spacing:.2px; }
+.hero .sub { font-size:.82rem; color:#8a8a90; margin-top:3px; }
+.hero .dot { color:#3fb27f; font-size:.78rem; }
+.hero .badge { display:inline-block; background:#ebf6f0; color:#2c8a5b;
+  font-size:.7rem; font-weight:600; padding:2px 8px; border-radius:10px;
+  margin-left:6px; }
 
 /* チャット吹き出し（モック寄せ：丸み・余白・パステル影） */
 .chatwrap { display:flex; flex-direction:column; gap:14px; padding:6px 2px 10px; }
@@ -183,19 +189,26 @@ html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2
 .bub p { margin:.2em 0; } .bub ul { margin:.3em 0; padding-left:1.1em; }
 .bub strong { font-weight:700; }
 
-/* 時刻バッジ（時間割を秘書がmarkdownで返す時に効くクラス） */
-.timebadge { display:inline-block; padding:4px 10px; border-radius:8px;
-  font-size:.78rem; font-weight:600; margin-right:8px;
-  background:#ede8f9; color:#5a4ab8; }
+/* チャット内の時刻スロット（19:30 - 20:00 ◯◯ を色付きバッジに変換) */
+.bub .slot { display:flex; align-items:center; gap:10px; padding:6px 10px;
+  background:#f7f5ff; border-left:3px solid #7a6dd6; border-radius:8px;
+  margin:6px 0; font-size:.88rem; }
+.bub .slot .time { background:#ede8f9; color:#5a4ab8; padding:3px 9px;
+  border-radius:6px; font-weight:700; font-size:.78rem; min-width:96px;
+  text-align:center; letter-spacing:.3px; font-variant-numeric:tabular-nums; }
+.bub .slot .lbl { color:#2c2c2e; font-weight:500; }
 
 /* タスクマトリックス */
-.boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 10px; font-size:1.02rem; }
-.qhead { font-weight:700; font-size:.86rem; padding:6px 10px; border-radius:8px;
-  background:#fff; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
-.qcount { background:#f0eefa; color:#5a4ab8; font-size:.7rem; padding:1px 7px;
+.boardttl { font-weight:700; color:#3a3a3e; margin:2px 0 12px; font-size:1.06rem;
+  display:flex; align-items:center; gap:8px; }
+.qhead { font-weight:700; font-size:.88rem; padding:8px 12px; border-radius:10px;
+  background:#fafafd; margin-bottom:6px; display:flex; align-items:center; gap:6px;
+  border-bottom:1px solid rgba(200,200,230,.3); }
+.qcount { background:#f0eefa; color:#5a4ab8; font-size:.7rem; padding:1px 8px;
   border-radius:10px; font-weight:600; margin-left:auto; }
-div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffcc;
-  border-radius:14px; border:1px solid rgba(200,200,230,.35); }
+div[data-testid="stVerticalBlockBorderWrapper"] { background:#ffffffe6;
+  border-radius:16px; border:1px solid rgba(200,200,230,.4);
+  box-shadow:0 4px 18px rgba(80,80,130,.05); }
 .stButton button { border-radius:12px; }
 
 /* タスク行（1行コンパクト） */
@@ -300,6 +313,36 @@ if st.sidebar.button("🔄 予定とタスクを最新に"):
     refresh()
     st.session_state.pop("chat_key", None)
     st.rerun()
+
+with st.sidebar.expander("📎 スクショからタスク抽出"):
+    st.caption("メールやメッセージのスクショをアップすると、Geminiが文字を読んでタスクを作ります。")
+    _img = st.file_uploader(
+        "画像をアップロード", type=["png", "jpg", "jpeg", "webp"],
+        label_visibility="collapsed", key="img_upload",
+    )
+    _img_hint = st.text_input(
+        "補足ヒント（任意）", key="img_hint",
+        placeholder="例：返信は明日まで",
+    )
+    if _img is not None:
+        st.image(_img, caption=_img.name, width="stretch")
+        if st.button("📸 画像からタスクを読み取る", type="primary", use_container_width=True):
+            try:
+                with st.spinner("画像を解析中…"):
+                    cands = extract_tasks_from_image(
+                        _img.getvalue(),
+                        _img.type or "image/png",
+                        target_label=target_label,
+                        target_date_iso=target_day.isoformat(),
+                        extra_hint=_img_hint or "",
+                    )
+                if cands:
+                    st.session_state["task_candidates"] = cands
+                    st.success(f"{len(cands)}件抽出。下のタスク候補で確認・編集→Googleタスクに追加してください。")
+                else:
+                    st.info("画像からタスクは見つかりませんでした。")
+            except Exception as e:  # noqa: BLE001
+                st.error(f"画像解析エラー: {e}")
 
 with st.sidebar.expander("📲 スマホ通知（ntfy）"):
     if st.button("いまのブリーフィングを送る"):
@@ -443,10 +486,34 @@ if not st.session_state["messages"]:
         st.stop()
 
 
+import re as _re
+
+_SLOT_PATTERN = _re.compile(
+    r'^[\s・\-\*●○◇◆]*(\d{1,2}:\d{2})\s*[-〜~–—]\s*(\d{1,2}:\d{2})\s*[:：]?\s*(.+?)\s*$',
+    _re.MULTILINE,
+)
+
+
+def _slotify(text: str) -> str:
+    """秘書AIの応答内に出てくる『19:30-20:00 ○○』を色付きカードに変換する。"""
+    def repl(m):
+        return (
+            f'<div class="slot">'
+            f'<span class="time">{m.group(1)}–{m.group(2)}</span>'
+            f'<span class="lbl">{m.group(3)}</span>'
+            f'</div>'
+        )
+    return _SLOT_PATTERN.sub(repl, text)
+
+
 def render_chat():
     rows = []
     for m in st.session_state["messages"]:
-        body = _md.markdown(m["content"], extensions=["nl2br", "sane_lists"])
+        # assistant のメッセージは時刻スロットを色付き化してから markdown 変換
+        raw = m["content"]
+        if m["role"] == "assistant":
+            raw = _slotify(raw)
+        body = _md.markdown(raw, extensions=["nl2br", "sane_lists"])
         if m["role"] == "assistant":
             rows.append(
                 f'<div class="row bot"><img class="ava" src="{AVATAR_URI}"/>'

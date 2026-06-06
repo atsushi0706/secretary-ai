@@ -507,6 +507,80 @@ def extract_tasks_from_conversation(
     return out
 
 
+def extract_tasks_from_image(
+    image_bytes: bytes,
+    mime_type: str,
+    target_label: str,
+    target_date_iso: str,
+    extra_hint: str = "",
+) -> list[dict]:
+    """画像(メールスクショ等)から『本人が対応すべきタスク』を抽出する。
+
+    Gemini Vision を使用。gemini-2.5-flash 以上（lite では画像非対応）。
+    """
+    from google.genai import types as _types
+
+    client = _get_client()
+    hint = f"\n【補足ヒント】{extra_hint}" if extra_hint.strip() else ""
+    prompt = f"""あなたは優秀な秘書です。下記の画像は本人が受け取ったメール・メッセージ・連絡・告知などのスクリーンショットです。
+画像から本文・件名・差出人を読み取り、本人が対応すべき『やるべきこと』を抽出してください。
+
+【ルール】
+- 1タスクは1行の具体的アクション（例「○○さんに納期を返信」）
+- 緊急度・重要度・所要時間を必ず判定
+- {target_label}({target_date_iso})までに着手すべきなら due="{target_date_iso}" を付ける。それ以外は due 空欄
+- 単なる挨拶・宣伝・通知系はタスク化しない
+- 該当が無ければ空配列 [] を返す（無理に作らない）
+{hint}
+
+JSON配列だけを返してください（説明文不要）:
+[
+  {{"title":"...","notes":"差出人や出所","urgency":"high|low","importance":"high|low","time":"quick|today|days","due":"{target_date_iso}|","reason":"30字以内"}}
+]
+"""
+
+    image_part = _types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+    # 画像対応モデルを直接指定（lite では画像非対応）
+    try:
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[image_part, prompt],
+            config={"response_mime_type": "application/json", "temperature": 0.3},
+        )
+    except Exception:  # noqa: BLE001
+        # フォールバック
+        resp = client.models.generate_content(
+            model="gemini-flash-latest",
+            contents=[image_part, prompt],
+            config={"response_mime_type": "application/json", "temperature": 0.3},
+        )
+
+    try:
+        data = json.loads(resp.text)
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+
+    out: list[dict] = []
+    for v in data:
+        if not isinstance(v, dict):
+            continue
+        title = str(v.get("title", "")).strip()
+        if not title:
+            continue
+        out.append({
+            "title": title[:120],
+            "notes": str(v.get("notes", ""))[:300],
+            "urgency": v.get("urgency") if v.get("urgency") in URGENCY else "low",
+            "importance": v.get("importance") if v.get("importance") in IMPORTANCE else "low",
+            "time": v.get("time") if v.get("time") in TIME else "today",
+            "due": str(v.get("due") or "").strip()[:10] or None,
+            "reason": str(v.get("reason", ""))[:60],
+        })
+    return out
+
+
 def build_daily_plan(events: list[dict], tasks: list[dict], labels: dict,
                      schedule: dict, mode: str, memo: str = "", transcript: str = "",
                      emails: list[dict] | None = None, work_end_hour: int = 17) -> str:
