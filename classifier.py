@@ -439,64 +439,63 @@ def extract_tasks_from_conversation(
     target_label: str,
     target_date_iso: str,
     mode: str,
+    existing_task_titles: list[str] | None = None,
 ) -> list[dict]:
-    """秘書との会話履歴＋現在の予定・既存タスクから「今/翌日やるべきこと」を抽出する。
+    """秘書との会話履歴から『会話で新しく出てきたタスク』だけ抽出する。
 
-    戻り値: [{title, notes, urgency, importance, time, due, reason}]
-      - urgency/importance ∈ {high, low}
-      - time ∈ {quick, today, days}
-      - due は YYYY-MM-DD（翌日タスク等で必要時）
-      - 既存のGoogleタスクと重複しそうなものは含めない
+    重要: 既存の Googleタスクは絶対に再掲しない。会話に明示的に出てきた話のみ。
+    会話が短い/タスク化要素が無い場合は空配列を返す。
     """
-    convo_lines = []
-    for m in messages[-30:]:
-        who = "本人" if m["role"] == "user" else SECRETARY_NAME
-        body = (m["content"] or "").replace("\n", " ")[:500]
-        convo_lines.append(f"{who}: {body}")
-    convo_block = "\n".join(convo_lines) or "(会話なし)"
+    # 本人の発言だけを抜き出す（秘書の発言からは抽出しない）
+    user_lines = [
+        (m.get("content") or "").strip()
+        for m in messages[-40:]
+        if m.get("role") == "user"
+    ]
+    user_text = "\n".join(f"- {l[:500]}" for l in user_lines if l) or "(本人の発言なし)"
+
+    # 直近の本人発言が極端に少ない場合は早期リターン
+    nonempty_count = sum(1 for l in user_lines if l.strip())
+    if nonempty_count == 0:
+        return []
+
+    existing_block = ""
+    if existing_task_titles:
+        existing_block = (
+            "【既存タスク一覧（これらの再掲は禁止。"
+            "意味が近いものも禁止。会話の中で明示的に追加・変更があった場合のみ例外）】\n"
+            + "\n".join(f"- {t}" for t in existing_task_titles[:50])
+        )
 
     mode_note = (
-        f"これは『朝の会話』です。{target_label}({target_date_iso})に着手すべきタスクを抽出してください。"
+        f"これは『朝の会話』。{target_label}({target_date_iso})に着手すべきタスクを抽出してください。"
         if mode == "morning"
-        else f"これは『夜の会話』です。{target_label}({target_date_iso})にやるべきタスクを抽出してください。"
-        " 既に終わったことや今日の振り返りはタスクにしないでください。"
+        else f"これは『夜の会話』。{target_label}({target_date_iso})にやるべきタスクを抽出してください。既に終わったことや振り返りはタスクにしない。"
     )
 
-    prompt = f"""あなたは優秀な秘書です。{mode_note}
+    prompt = f"""あなたは秘書AI。{mode_note}
 
-【現在の予定・タスク・メール状況】
-{context_block}
+【極めて重要なルール】
+- 本人が【今回の会話の中で】明示的に口にした「新しく追加したいこと」「依頼された対応」だけを抽出する
+- 既存タスク一覧にあるものは、たとえ会話で名前が出ても再掲禁止（重複禁止）
+- 「コンテキストにあるから入れておこう」は禁止。あくまで【会話に出てきたか】だけが基準
+- 会話に追加すべき新タスクの言及が無ければ、必ず空配列 [] を返す
+- 単なる感想・予定の確認・振り返り・愚痴は絶対にタスク化しない
+- 既存タスクの言い換え（例:「動画作成」→「動画つくる」）も禁止
+- 数日かかる仕事は『{target_label}の最小着手ステップ』に分解する
 
-【秘書と本人の会話】
-{convo_block}
+{existing_block}
 
-会話の中で本人が口にした「やりたいこと」「優先したいこと」「やらないといけないこと」
-「依頼された対応」を、Googleタスクに追加すべき形に変換してください。
+【今回の会話（本人の発言のみ）】
+{user_text}
 
-【ルール】
-- 既に【未完了タスク】に同じ意味のものがある場合は出力しない（重複禁止）
-- 単なる感想・予定の確認・振り返りはタスクにしない
-- 1つのタスクは1行で完結する具体的アクションにする
-- 数日かかる仕事は「{target_label}の最小着手ステップ」に分解する
-- 緊急度・重要度・所要時間を必ず判定する
-- {target_label}やるべきものだけ due=「{target_date_iso}」を付ける。それ以外は due を空にする
-- 候補が無ければ空配列 [] を返す（無理に作らない）
-
-次のJSON配列だけを返してください（説明文・前置きは不要）:
+JSON配列だけを返してください（説明文・前置き・コードフェンス禁止）:
 [
-  {{
-    "title": "30字以内の具体的アクション",
-    "notes": "出所(本人の発言など)を短く",
-    "urgency": "high|low",
-    "importance": "high|low",
-    "time": "quick|today|days",
-    "due": "{target_date_iso}|",
-    "reason": "なぜこの分類か30字以内"
-  }}
+  {{"title":"30字以内","notes":"会話で本人が言った原文の要約","urgency":"high|low","importance":"high|low","time":"quick|today|days","due":"{target_date_iso}|","reason":"30字以内"}}
 ]
 """
 
-    resp = _generate(prompt, {"response_mime_type": "application/json", "temperature": 0.3})
+    resp = _generate(prompt, {"response_mime_type": "application/json", "temperature": 0.2})
     try:
         data = json.loads(resp.text)
     except (json.JSONDecodeError, ValueError):
@@ -504,12 +503,25 @@ def extract_tasks_from_conversation(
     if not isinstance(data, list):
         return []
 
+    # 既存タスクと部分一致したものは除外（安全装置）
+    existing_norm = {(t or "").strip().lower() for t in (existing_task_titles or [])}
+
     out: list[dict] = []
     for v in data:
         if not isinstance(v, dict):
             continue
         title = str(v.get("title", "")).strip()
         if not title:
+            continue
+        # 既存タスクと文字列ほぼ同じなら除外
+        tnorm = title.strip().lower()
+        if tnorm in existing_norm:
+            continue
+        # 既存タスクに含まれる/含むなら除外（部分一致）
+        if any(
+            (e and (e in tnorm or tnorm in e) and abs(len(e) - len(tnorm)) < 6)
+            for e in existing_norm
+        ):
             continue
         out.append({
             "title": title[:120],

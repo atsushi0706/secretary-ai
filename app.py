@@ -156,7 +156,7 @@ def inject_css():
 html, body, [class*="css"] { font-family: 'Noto Sans JP', sans-serif; color:#2c2c2e; }
 #MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; height: 0; }
 .stApp { background: linear-gradient(160deg, #fafbff 0%, #f3f0fa 60%, #ecf2fb 100%); }
-.block-container { padding-top: 1.4rem; padding-bottom: 6rem; max-width: 1480px; }
+.block-container { padding-top: 1.4rem; padding-bottom: 6rem; max-width: 1100px; }
 
 /* ヘッダーカード */
 .hero { display:flex; align-items:center; gap:18px; background:#ffffff;
@@ -580,6 +580,7 @@ def render_task_extractor():
                     target_label=target_label,
                     target_date_iso=target_day.isoformat(),
                     mode=mode_key,
+                    existing_task_titles=[t.get("title", "") for t in tasks],
                 )
             st.session_state["task_candidates"] = cands
             if not cands:
@@ -701,22 +702,67 @@ def render_task(t: dict):
 
 
 QUAD_SHORT = {
-    ("high", "high"): "🔴 緊急 × 重要",
-    ("low", "high"): "🟡 重要だが緊急でない",
-    ("high", "low"): "🔵 緊急だが重要度が低い",
-    ("low", "low"): "⚪ 緊急度も重要度も低い",
+    ("high", "high"): "🔴",
+    ("low", "high"): "🟡",
+    ("high", "low"): "🔵",
+    ("low", "low"): "⚪",
 }
 
 
+def _open_add_form(quad_key: str):
+    st.session_state[f"adding_q_{quad_key}"] = True
+
+
 def render_quadrant(key: tuple, items: list):
-    """4象限カード1枚分を描画する。タスクが多くてもカードは固定高で縦スクロール。"""
+    """4象限カード1枚分。ヘッダーに『+』ボタン、押すと追加フォームが開く。"""
     color = QUAD_COLOR[key]
-    with st.container(border=True, height=360):
-        st.markdown(
-            f'<div class="qhead" style="border-left:5px solid {color}">'
-            f'{QUAD_SHORT[key]}  <span class="qcount">{len(items)}</span></div>',
-            unsafe_allow_html=True,
-        )
+    quad_key = f"{key[0]}_{key[1]}"
+    with st.container(border=True, height=320):
+        h1, h2 = st.columns([5, 1])
+        with h1:
+            st.markdown(
+                f'<div class="qhead" style="border-left:5px solid {color}">'
+                f'{QUAD_SHORT[key]} <span class="qcount">{len(items)}</span></div>',
+                unsafe_allow_html=True,
+            )
+        with h2:
+            st.button(
+                "＋", key=f"add_q_{quad_key}",
+                help="このマスにタスク追加",
+                on_click=_open_add_form, args=(quad_key,),
+            )
+
+        # 追加フォーム（開いている時のみ）
+        if st.session_state.get(f"adding_q_{quad_key}"):
+            with st.form(f"qadd_form_{quad_key}", clear_on_submit=True):
+                new_title = st.text_input(
+                    "やること", key=f"q_title_{quad_key}",
+                    placeholder="例：◯◯さんに返信", label_visibility="collapsed",
+                )
+                tm = st.selectbox(
+                    "所要時間", list(TIME_OPTS), key=f"q_t_{quad_key}",
+                    label_visibility="collapsed",
+                )
+                has_due = st.checkbox("期限あり", key=f"q_hd_{quad_key}")
+                due_date = st.date_input(
+                    "期限", value=today, key=f"q_date_{quad_key}",
+                    label_visibility="collapsed", disabled=not has_due,
+                )
+                btn1, btn2 = st.columns(2)
+                submitted = btn1.form_submit_button("追加", type="primary", use_container_width=True)
+                cancelled = btn2.form_submit_button("中止", use_container_width=True)
+                if submitted and new_title.strip():
+                    created = gc.add_task(
+                        new_title.strip(),
+                        due=due_date.isoformat() if has_due else None,
+                    )
+                    set_manual_label(created["id"], key[0], key[1], TIME_OPTS[tm])
+                    st.session_state[f"adding_q_{quad_key}"] = False
+                    st.toast(f"➕ 追加: {new_title}"); refresh(); st.rerun()
+                if cancelled:
+                    st.session_state[f"adding_q_{quad_key}"] = False
+                    st.rerun()
+
         if not items:
             st.caption("なし")
         for t in items:
@@ -725,35 +771,16 @@ def render_quadrant(key: tuple, items: list):
 
 def render_board():
     st.markdown(
-        '<div class="boardttl">🗂️ タスクマトリックス（緊急度 × 重要度）</div>',
+        '<div class="boardttl">🗂️ タスクマトリックス</div>',
         unsafe_allow_html=True,
     )
-    with st.expander("➕ タスクを追加"):
-        with st.form("add_task_form", clear_on_submit=True):
-            new_title = st.text_input("やること", placeholder="例：企画書を仕上げる")
-            has_due = st.checkbox("期限あり")
-            due_date = st.date_input("期限", value=today, label_visibility="collapsed")
-            cls_mode = st.radio("優先度", ["AIにおまかせ", "自分で指定"], horizontal=True)
-            m1, m2, m3 = st.columns(3)
-            u = m1.selectbox("緊急度", list(URGENCY_OPTS), key="add_u")
-            imp = m2.selectbox("重要度", list(IMPORTANCE_OPTS), key="add_i")
-            tm = m3.selectbox("所要時間", list(TIME_OPTS), key="add_t")
-            if st.form_submit_button("Googleタスクに追加", type="primary") and new_title.strip():
-                created = gc.add_task(new_title.strip(),
-                                      due=due_date.isoformat() if has_due else None)
-                if cls_mode == "自分で指定":
-                    set_manual_label(created["id"], URGENCY_OPTS[u], IMPORTANCE_OPTS[imp], TIME_OPTS[tm])
-                st.toast(f"➕ 追加: {new_title}"); refresh(); st.rerun()
 
     quadrants = {k: [] for k in QUADRANT_LABEL}
     for t in tasks:
         lb = labels.get(t["id"], {})
         quadrants[(lb.get("urgency", "low"), lb.get("importance", "low"))].append(t)
 
-    # 2×2 グリッド配置（モックUIに合わせて）
-    # 上段: 左=重要だが緊急でない / 右=緊急かつ重要
-    # 下段: 左=重要度が低く緊急でない / 右=緊急だが重要度が低い
-    st.caption("↑ 重要度 高　／　→ 緊急度 高")
+    # 2×2 グリッド（軸の説明文なし、各象限の「+」ボタンで直接追加）
     row1_left, row1_right = st.columns(2, gap="small")
     with row1_left:
         render_quadrant(("low", "high"), quadrants[("low", "high")])
@@ -935,20 +962,28 @@ def render_month_calendar():
 
 
 if focus:
-    render_chat()
+    # 集中モード: チャットだけ
+    with st.container(height=560):
+        render_chat()
     render_task_extractor()
 else:
-    # チャット側を狭め、マトリクス側を広く(比率 2:3)
-    col_chat, col_board = st.columns([2, 3], gap="large")
-    with col_chat:
+    # 縦積みレイアウト
+    # 1) 最上部: タスクマトリックス
+    render_board()
+    # 2) 今日のアドバイス
+    render_today_advice()
+    # 3) チャット窓（固定高さ・スクロール可）
+    st.markdown(
+        '<div class="boardttl" style="margin-top:14px;">💬 清瀬リンクとの会話</div>',
+        unsafe_allow_html=True,
+    )
+    with st.container(height=440):
         render_chat()
-        render_task_extractor()
-    with col_board:
-        render_board()
-        render_today_advice()
-        # 月間カレンダー（来週・来月の予定も確認できる）
-        with st.expander("📅 月間カレンダー", expanded=False):
-            render_month_calendar()
+    # 4) タスク抽出（会話から）
+    render_task_extractor()
+    # 5) 月間カレンダー（折りたたみ）
+    with st.expander("📅 月間カレンダー", expanded=False):
+        render_month_calendar()
 
 
 # 入力（テキスト・音声・画像添付すべて1つの入力欄から）
