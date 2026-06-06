@@ -24,17 +24,52 @@ CACHE_FILE = BASE_DIR / "data" / "classification_cache.json"
 MANUAL_FILE = BASE_DIR / "data" / "manual_labels.json"  # 本人が手で決めた分類(AIより優先)
 
 # 分類の定義(画面のボックスと対応)
-URGENCY = ["high", "low"]        # 緊急度
-IMPORTANCE = ["high", "low"]     # 重要度
-TIME = ["quick", "today", "days"]  # すぐ / その日中 / 数日
+URGENCY = ["high", "low"]
+IMPORTANCE = ["high", "low"]
+TIME = ["quick", "today", "days"]  # quick=すぐ / today=半日〜1日 / days=1〜3日
+CATEGORY = ["work", "personal"]    # work=仕事 / personal=自分時間・趣味
 
-TIME_LABEL = {"quick": "⚡すぐ終わる", "today": "📅その日中", "days": "🗓数日かかる"}
+TIME_LABEL = {"quick": "⚡すぐ終わる", "today": "📅半日〜1日", "days": "🗓1〜3日"}
 QUADRANT_LABEL = {
     ("high", "high"): "🔴 緊急度が高い・重要度が高い",
     ("low", "high"): "🟡 重要度は高いが緊急度は低い",
     ("high", "low"): "🔵 緊急度は高いが重要度は低い",
     ("low", "low"): "⚪ 緊急度も重要度も低い",
 }
+
+
+# 表示用カテゴリ（4ボックス）。タスクは下記いずれか1つに割り当てられる。
+CATEGORY_LABEL = {
+    "urgent_work":     "🔴 今すぐやる",
+    "important_work":  "🟡 重要だが後で",
+    "personal":        "🟢 自分時間・趣味",
+    "by_time":         "🔵 作業時間別",
+}
+CATEGORY_DESC = {
+    "urgent_work":     "緊急 × 重要（仕事）— 即着手",
+    "important_work":  "重要だが緊急でない（仕事）— ビジョン系",
+    "personal":        "趣味・自己投資・休息",
+    "by_time":         "上記以外を所要時間で整理",
+}
+CATEGORY_COLOR = {
+    "urgent_work":     "#e2574c",
+    "important_work":  "#e0a82e",
+    "personal":        "#3fb27f",
+    "by_time":         "#3a78c2",
+}
+
+
+def categorize(label: dict) -> str:
+    """タスクのラベルから4ボックスのどれに入れるかを返す。"""
+    if (label.get("category") or "work") == "personal":
+        return "personal"
+    u = label.get("urgency", "low")
+    i = label.get("importance", "low")
+    if u == "high" and i == "high":
+        return "urgent_work"
+    if i == "high":
+        return "important_work"
+    return "by_time"
 
 
 _client: "genai.Client | None" = None
@@ -84,9 +119,17 @@ def _generate(contents, config: dict, retries: int = 3):
 
 
 def _load_cache() -> dict:
-    if CACHE_FILE.exists():
-        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
-    return {}
+    if not CACHE_FILE.exists():
+        return {}
+    try:
+        cache = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    # 旧フォーマット(category なし)は捨てて再分類させる
+    return {
+        k: v for k, v in cache.items()
+        if isinstance(v, dict) and "category" in v
+    }
 
 
 def _save_cache(cache: dict) -> None:
@@ -104,11 +147,13 @@ def load_manual_labels() -> dict:
     return {}
 
 
-def set_manual_label(task_id: str, urgency: str, importance: str, time: str) -> None:
+def set_manual_label(task_id: str, urgency: str, importance: str, time: str,
+                     category: str = "work") -> None:
     """本人が決めた分類を保存(以後AIで上書きしない)。"""
     data = load_manual_labels()
     data[task_id] = {
         "urgency": urgency, "importance": importance, "time": time,
+        "category": category if category in CATEGORY else "work",
         "reason": "手動で設定", "manual": True,
     }
     MANUAL_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +220,11 @@ def _call_gemini(tasks: list[dict]) -> dict[str, dict]:
     tasks_block = "\n".join(task_lines)
 
     prompt = f"""あなたは優秀な秘書です。今日は {today} です。
-以下のToDoタスクを、3つの軸で分類してください。
+以下のToDoタスクを、4つの軸で分類してください。
+
+【カテゴリ category】タスクの性質
+- work: 仕事・成果・他人との約束に関わるもの
+- personal: 趣味・自己投資・休息・健康（筋トレ・読書・学習・ダイエット等）
 
 【緊急度 urgency】期限の近さ・締切リスク
 - high: 今日〜数日以内にやらないと問題になる
@@ -186,14 +235,13 @@ def _call_gemini(tasks: list[dict]) -> dict[str, dict]:
 - low: やらなくても大きな影響はない
 
 【所要時間 time】片付くまでの目安
-- quick: 5〜15分で終わる軽い作業
-- today: その日のうちに終わる
-- days: 数日かかる/分割が必要
+- quick: 5〜30分で終わる軽い作業
+- today: 半日〜1日で終わる
+- days: 1〜3日かかる/分割が必要
 
 各タスクについて、必ず次のJSON形式だけを返してください(説明文は不要):
 {{
-  "タスクid": {{"urgency": "high|low", "importance": "high|low", "time": "quick|today|days", "reason": "30字以内の理由"}},
-  ...
+  "タスクid": {{"category":"work|personal","urgency":"high|low","importance":"high|low","time":"quick|today|days","reason":"30字以内"}}
 }}
 
 タスク一覧:
@@ -212,6 +260,7 @@ def _call_gemini(tasks: list[dict]) -> dict[str, dict]:
         if not isinstance(v, dict):
             continue
         cleaned[tid] = {
+            "category": v.get("category") if v.get("category") in CATEGORY else "work",
             "urgency": v.get("urgency") if v.get("urgency") in URGENCY else "low",
             "importance": v.get("importance") if v.get("importance") in IMPORTANCE else "low",
             "time": v.get("time") if v.get("time") in TIME else "today",

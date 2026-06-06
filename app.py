@@ -24,10 +24,14 @@ except Exception:  # noqa: BLE001
 import google_client as gc
 import storage
 from classifier import (
+    CATEGORY_COLOR,
+    CATEGORY_DESC,
+    CATEGORY_LABEL,
     QUADRANT_LABEL,
     SECRETARY_NAME,
     TIME_LABEL,
     build_context_block,
+    categorize,
     classify_tasks,
     clear_manual_label,
     extract_tasks_from_conversation,
@@ -694,6 +698,10 @@ def render_task(t: dict):
         )
     with c_btn:
         with st.popover("⋮", help="詳細・編集・削除"):
+            cat_opts = {"仕事": "work", "自分時間・趣味": "personal"}
+            cur_cat = lb.get("category", "work")
+            cat_idx = 1 if cur_cat == "personal" else 0
+            cat_sel = st.selectbox("カテゴリ", list(cat_opts), index=cat_idx, key=f"cat_{t['id']}")
             u = st.selectbox("緊急度", list(URGENCY_OPTS),
                              index=0 if lb.get("urgency") == "high" else 1, key=f"u_{t['id']}")
             imp = st.selectbox("重要度", list(IMPORTANCE_OPTS),
@@ -701,7 +709,10 @@ def render_task(t: dict):
             tm_idx = next((n for n, v in enumerate(TIME_OPTS.values()) if v == lb.get("time")), 1)
             tm = st.selectbox("所要時間", list(TIME_OPTS), index=tm_idx, key=f"t_{t['id']}")
             if st.button("この分類で保存", key=f"save_{t['id']}", use_container_width=True):
-                set_manual_label(t["id"], URGENCY_OPTS[u], IMPORTANCE_OPTS[imp], TIME_OPTS[tm])
+                set_manual_label(
+                    t["id"], URGENCY_OPTS[u], IMPORTANCE_OPTS[imp], TIME_OPTS[tm],
+                    category=cat_opts[cat_sel],
+                )
                 refresh(); st.rerun()
             if st.button("AI判定に戻す", key=f"auto_{t['id']}", use_container_width=True):
                 clear_manual_label(t["id"]); refresh(); st.rerun()
@@ -713,11 +724,13 @@ def render_task(t: dict):
         st.toast(f"✅ 完了: {t['title']}"); refresh(); st.rerun()
 
 
-QUAD_SHORT = {
-    ("high", "high"): "🔴 緊急度：高 × 重要度：高",
-    ("low", "high"): "🟡 緊急度：低 × 重要度：高",
-    ("high", "low"): "🔵 緊急度：高 × 重要度：低",
-    ("low", "low"): "⚪ 緊急度：低 × 重要度：低",
+# カテゴリごとの「+」追加時に固定するラベル
+CATEGORY_FIXED = {
+    "urgent_work":     {"urgency": "high", "importance": "high", "category": "work"},
+    "important_work":  {"urgency": "low",  "importance": "high", "category": "work"},
+    "personal":        {"urgency": "low",  "importance": "high", "category": "personal"},
+    # by_time は時間別でグルーピング、緊急/重要は中。追加時はその他扱い。
+    "by_time":         {"urgency": "low",  "importance": "low",  "category": "work"},
 }
 
 
@@ -725,39 +738,45 @@ def _open_add_form(quad_key: str):
     st.session_state[f"adding_q_{quad_key}"] = True
 
 
-def render_quadrant(key: tuple, items: list):
-    """4象限カード1枚分。ヘッダーに『+』ボタン、押すと追加フォームが開く。"""
-    color = QUAD_COLOR[key]
-    quad_key = f"{key[0]}_{key[1]}"
-    with st.container(border=True, height=320):
+def render_category_card(cat_key: str, items: list):
+    """4ボックスカード1枚分。ヘッダーに『+』、押すと追加フォームが開く。
+
+    by_time カテゴリだけは内部を時間別にサブグルーピング。
+    """
+    color = CATEGORY_COLOR[cat_key]
+    label = CATEGORY_LABEL[cat_key]
+    desc = CATEGORY_DESC[cat_key]
+    fixed = CATEGORY_FIXED[cat_key]
+    with st.container(border=True, height=340):
         h1, h2 = st.columns([5, 1])
         with h1:
             st.markdown(
                 f'<div class="qhead" style="border-left:5px solid {color}">'
-                f'{QUAD_SHORT[key]} <span class="qcount">{len(items)}</span></div>',
+                f'{label} <span class="qcount">{len(items)}</span></div>'
+                f'<div style="font-size:.72rem;color:#8a8a90;margin:2px 0 6px 6px;">{desc}</div>',
                 unsafe_allow_html=True,
             )
         with h2:
             st.button(
-                "＋", key=f"add_q_{quad_key}",
-                help="このマスにタスク追加",
-                on_click=_open_add_form, args=(quad_key,),
+                "＋", key=f"add_q_{cat_key}",
+                help=f"{label} にタスク追加",
+                on_click=_open_add_form, args=(cat_key,),
             )
 
-        # 追加フォーム（開いている時のみ）
-        if st.session_state.get(f"adding_q_{quad_key}"):
-            with st.form(f"qadd_form_{quad_key}", clear_on_submit=True):
+        # 追加フォーム
+        if st.session_state.get(f"adding_q_{cat_key}"):
+            with st.form(f"qadd_form_{cat_key}", clear_on_submit=True):
                 new_title = st.text_input(
-                    "やること", key=f"q_title_{quad_key}",
+                    "やること", key=f"q_title_{cat_key}",
                     placeholder="例：◯◯さんに返信", label_visibility="collapsed",
                 )
                 tm = st.selectbox(
-                    "所要時間", list(TIME_OPTS), key=f"q_t_{quad_key}",
+                    "所要時間", list(TIME_OPTS), key=f"q_t_{cat_key}",
                     label_visibility="collapsed",
                 )
-                has_due = st.checkbox("期限あり", key=f"q_hd_{quad_key}")
+                has_due = st.checkbox("期限あり", key=f"q_hd_{cat_key}")
                 due_date = st.date_input(
-                    "期限", value=today, key=f"q_date_{quad_key}",
+                    "期限", value=today, key=f"q_date_{cat_key}",
                     label_visibility="collapsed", disabled=not has_due,
                 )
                 btn1, btn2 = st.columns(2)
@@ -768,41 +787,67 @@ def render_quadrant(key: tuple, items: list):
                         new_title.strip(),
                         due=due_date.isoformat() if has_due else None,
                     )
-                    set_manual_label(created["id"], key[0], key[1], TIME_OPTS[tm])
-                    st.session_state[f"adding_q_{quad_key}"] = False
+                    set_manual_label(
+                        created["id"], fixed["urgency"], fixed["importance"],
+                        TIME_OPTS[tm], category=fixed["category"],
+                    )
+                    st.session_state[f"adding_q_{cat_key}"] = False
                     st.toast(f"➕ 追加: {new_title}"); refresh(); st.rerun()
                 if cancelled:
-                    st.session_state[f"adding_q_{quad_key}"] = False
+                    st.session_state[f"adding_q_{cat_key}"] = False
                     st.rerun()
 
         if not items:
             st.caption("なし")
-        for t in items:
-            render_task(t)
+        elif cat_key == "by_time":
+            # 時間別にサブグルーピング
+            time_groups = {"quick": [], "today": [], "days": []}
+            for t in items:
+                lb = labels.get(t["id"], {})
+                tk = lb.get("time", "today")
+                if tk not in time_groups:
+                    tk = "today"
+                time_groups[tk].append(t)
+            for tk in ("quick", "today", "days"):
+                grp = time_groups[tk]
+                if not grp:
+                    continue
+                st.markdown(
+                    f'<div style="font-size:.74rem;color:#5a4ab8;font-weight:600;'
+                    f'margin:6px 0 2px 4px;">{TIME_LABEL[tk]}</div>',
+                    unsafe_allow_html=True,
+                )
+                for t in grp:
+                    render_task(t)
+        else:
+            for t in items:
+                render_task(t)
 
 
 def render_board():
     st.markdown(
-        '<div class="boardttl">🗂️ タスクマトリックス</div>',
+        '<div class="boardttl">🗂️ タスクボード</div>',
         unsafe_allow_html=True,
     )
 
-    quadrants = {k: [] for k in QUADRANT_LABEL}
+    # タスクを4カテゴリに割り振る
+    buckets = {k: [] for k in CATEGORY_LABEL}
     for t in tasks:
         lb = labels.get(t["id"], {})
-        quadrants[(lb.get("urgency", "low"), lb.get("importance", "low"))].append(t)
+        cat = categorize(lb)
+        buckets.setdefault(cat, []).append(t)
 
-    # 2×2 グリッド（軸の説明文なし、各象限の「+」ボタンで直接追加）
-    row1_left, row1_right = st.columns(2, gap="small")
-    with row1_left:
-        render_quadrant(("low", "high"), quadrants[("low", "high")])
-    with row1_right:
-        render_quadrant(("high", "high"), quadrants[("high", "high")])
-    row2_left, row2_right = st.columns(2, gap="small")
-    with row2_left:
-        render_quadrant(("low", "low"), quadrants[("low", "low")])
-    with row2_right:
-        render_quadrant(("high", "low"), quadrants[("high", "low")])
+    # 2×2 グリッド
+    r1c1, r1c2 = st.columns(2, gap="small")
+    with r1c1:
+        render_category_card("urgent_work", buckets["urgent_work"])
+    with r1c2:
+        render_category_card("important_work", buckets["important_work"])
+    r2c1, r2c2 = st.columns(2, gap="small")
+    with r2c1:
+        render_category_card("personal", buckets["personal"])
+    with r2c2:
+        render_category_card("by_time", buckets["by_time"])
 
 
 # ─────────────────────────────────────────────
