@@ -362,27 +362,20 @@ if AVATAR.exists():
 st.sidebar.title(f"秘書 {SECRETARY_NAME}")
 
 # 時刻で自動判別: 15時より前は morning(今日の組み立て)、それ以降は evening(明日の準備)
-# 手動切替したい時のために override も用意
 _now_hour = dt.datetime.now(JST).hour
 _auto_mode = "morning" if _now_hour < 15 else "evening"
-_override = st.sidebar.selectbox(
-    "モード",
-    options=["🤖 自動", "🌅 朝（今日の組み立て）", "🌙 夜（明日の準備）"],
-    index=0,
-    help="通常は時刻で自動切替（15時以降は明日の準備モード）。手動で固定もできる",
-)
-if _override.startswith("🤖"):
+_auto_mode_index = 0  # 「自動」を初期選択
+# モード切替UIはメイン上部に置く（スマホ対応）。ここでは session_state から復元
+_override_value = st.session_state.get("mode_select_main", "🤖 自動")
+if _override_value.startswith("🤖"):
     is_morning = _auto_mode == "morning"
-elif _override.startswith("🌅"):
+elif _override_value.startswith("🌅"):
     is_morning = True
 else:
     is_morning = False
 mode = "🌅 朝" if is_morning else "🌙 夜"
-st.sidebar.caption(
-    f"いまのモード: {'🌅 今日の組み立て' if is_morning else '🌙 明日の準備'}"
-    + (f"（自動・現在{_now_hour}時）" if _override.startswith('🤖') else "（手動固定）")
-)
-focus = st.sidebar.toggle("🗨️ 集中モード（会話だけ）", value=False)
+focus = st.session_state.get("focus_main", False)
+# サイドバーには予定リフレッシュ
 if st.sidebar.button("🔄 予定とタスクを最新に"):
     refresh()
     st.session_state.pop("chat_key", None)
@@ -1014,8 +1007,27 @@ def render_month_calendar():
     )
 
 
-# 月間カレンダー（関数定義後にサイドバーへ常時表示）
-with st.sidebar:
+# ヘッダー直下のコントロール（スマホでも見える位置に置く）
+ctrl_c1, ctrl_c2 = st.columns([3, 1])
+with ctrl_c1:
+    st.selectbox(
+        "モード",
+        options=["🤖 自動", "🌅 朝（今日の組み立て）", "🌙 夜（明日の準備）"],
+        index=0,
+        help="通常は時刻で自動切替（15時以降は明日の準備モード）。手動で固定もできる",
+        label_visibility="collapsed",
+        key="mode_select_main",
+    )
+with ctrl_c2:
+    st.toggle("集中モード", value=focus, key="focus_main",
+              help="チャットだけに集中したい時")
+st.caption(
+    f"💡 いま: **{'今日の組み立て' if is_morning else '明日の準備'}** "
+    + (f"（自動・{_now_hour}時）" if st.session_state.get('mode_select_main', '🤖 自動').startswith('🤖') else "（手動固定）")
+)
+
+# 月間カレンダー（メインに折りたたみ。スマホでも開ける）
+with st.expander("📅 月間カレンダー", expanded=False):
     render_month_calendar()
 
 
